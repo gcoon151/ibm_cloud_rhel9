@@ -1,0 +1,39 @@
+diff --git a/podvm-payload/Dockerfile b/podvm-payload/Dockerfile
+index 25ffbfc6..e5ac3911 100644
+--- a/podvm-payload/Dockerfile
++++ b/podvm-payload/Dockerfile
+@@ -46,13 +46,17 @@ USER root
+ # If you are running a UBI container on a registered and subscribed RHEL host,
+ # the main RHEL Server repository is enabled inside the standard UBI container.
+ # Uncomment this and provide the associated ARG variables to register.
+-#RUN if command -v subscription-manager; then \
+-#      REPO_ARCH=$(uname -m) && \
+-#      subscription-manager register --org "$(cat /activation-key/org)" --activationkey "$(cat /activation-key/activationkey)" && \
+-#      subscription-manager repos --enable rhel-9-for-${REPO_ARCH}-appstream-rpms --enable codeready-builder-for-rhel-9-${REPO_ARCH}-rpms; \
+-#    else \
+-#      dnf -y install 'dnf-command(config-manager)' && dnf config-manager --enable crb; \
+-#    fi
++
++
++RUN --mount=type=secret,id=org,dst=/run/secrets/org \
++    --mount=type=secret,id=key,dst=/run/secrets/key \
++    if command -v subscription-manager; then \
++      REPO_ARCH=$(uname -m) && \
++      subscription-manager register --org "$(cat /run/secrets/org)" --activationkey "$(cat /run/secrets/key)" && \
++      subscription-manager repos --enable rhel-9-for-${REPO_ARCH}-appstream-rpms --enable codeready-builder-for-rhel-9-${REPO_ARCH}-rpms; \
++    else \
++      dnf -y install 'dnf-command(config-manager)' && dnf config-manager --enable crb; \
++    fi
+ RUN dnf clean packages && dnf install -y git rust cargo perl-File-Compare perl-FindBin cmake gcc-c++ perl protobuf-compiler clang-devel device-mapper-devel tpm2-tss-devel
+ 
+ RUN mkdir -p /artifacts/usr/local/bin
+@@ -72,7 +76,7 @@ RUN ARCH=$(uname -m) && \
+   if [ "$ARCH" = "s390x" ]; then \
+         cargo build --verbose --release --no-default-features --features "coco_as,kbs,se-attester,bin,ttrpc,openssl"; \
+   else \
+-        cargo build --verbose --release --no-default-features --features "coco_as,kbs,az-snp-vtpm-attester,az-tdx-vtpm-attester,bin,ttrpc,openssl"; \
++        cargo build --verbose --release --no-default-features --features "coco_as,kbs,az-snp-vtpm-attester,az-tdx-vtpm-attester,snp-attester,tdx-attester,bin,ttrpc,openssl"; \
+   fi
+ RUN cp /workdir/guest-components/target/release/ttrpc-aa /artifacts/usr/local/bin/attestation-agent
+
+# Made with Bob

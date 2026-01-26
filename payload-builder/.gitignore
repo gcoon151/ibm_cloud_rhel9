@@ -1,0 +1,18 @@
+# Red Hat Subscription Credentials
+org.txt
+key.txt
+org_secret.txt
+key_secret.txt
+*.secret
+
+# Build artifacts
+payload-digest.txt
+payload-info.txt
+
+# Temporary files
+*.tmp
+*.log
+
+# Container images
+*.tar
+*.tar.gz

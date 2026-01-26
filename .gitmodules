@@ -1,0 +1,4 @@
+[submodule "payload-builder/cloud-api-adaptor"]
+	path = payload-builder/cloud-api-adaptor
+	url = https://github.com/openshift/cloud-api-adaptor.git
+	branch = osc-release-v1.10
