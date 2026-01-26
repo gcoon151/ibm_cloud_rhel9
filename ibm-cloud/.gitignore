@@ -1,0 +1,19 @@
+# Environment files with secrets
+.env
+
+# Work directories
+/tmp/
+*.log
+
+# IBM Cloud credentials
+.bluemix/
+.ibmcloud/
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Build artifacts
+*.qcow2
+*.qcow2.tmp
