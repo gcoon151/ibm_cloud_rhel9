@@ -1,0 +1,154 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: build-pipeline-rhel9
+  labels:
+    rhel.version: "9"
+spec:
+  params:
+    - description: Source Repository URL
+      name: git-url
+      type: string
+    - default: ""
+      description: Revision of the Source Repository
+      name: revision
+      type: string
+    - description: Fully Qualified Output Image
+      name: output-image
+      type: string
+    - name: image-type
+      description: Image type to build 
+      type: string
+      default: ""
+    - description: config.toml file to pass to BIB
+      default: ""
+      type: string
+      name: config-toml
+    - description: path to bib yaml file
+      default: "bib.yaml"
+      name: bib-file
+      type: string
+    - default: konflux
+      description:
+        Path to the source code of an application's component from where
+        to build image.
+      name: path-context
+      type: string
+    - default: Dockerfile.rhel9
+      description:
+        Path to the Dockerfile inside the context specified by parameter
+        path-context (RHEL 9 specific)
+      name: dockerfile
+      type: string
+    - default: "false"
+      description: Force rebuild image
+      name: rebuild
+      type: string
+    - default: "false"
+      description: Skip checks against built image
+      name: skip-checks
+      type: string
+    - default: "true"
+      description: Skip optional checks, set false if you want to run optional checks
+      name: skip-optional
+      type: string
+    - default: "false"
+      description: Execute the build with network isolation
+      name: hermetic
+      type: string
+    - default: ""
+      description: Build dependencies to be prefetched by Cachi2
+      name: prefetch-input
+      type: string
+    - default: "false"
+      description: Java build
+      name: java
+      type: string
+    - default: ""
+      description:
+        Image tag expiration time, time values could be something like
+        1h, 2d, 3w for hours, days, and weeks, respectively.
+      name: image-expires-after
+    - name: additional-tags
+      description: Additional tags to apply to the built image
+      type: array
+      default: []
+    - name: build-platforms
+      description: List of platforms to build the disk images on. The available
+        set of values is determined by the configuration of the multi-platform-controller.
+      type: array
+      default:
+        - linux-root/amd64
+    - name: rhel-iso-url
+      description: URL to RHEL 9 ISO for image building
+      type: string
+      default: ""
+    - name: kickstart-file
+      description: Kickstart file to use for RHEL 9 image
+      type: string
+      default: "helpers/rhel9-dm-root.ks"
+  results:
+    - description: ""
+      name: CHAINS-GIT_URL
+      value: $(tasks.clone-repository.results.url)
+    - description: ""
+      name: CHAINS-GIT_COMMIT
+      value: $(tasks.clone-repository.results.commit)
+    - description: ""
+      name: IMAGE_URL
+      value: $(tasks.build-image-index.results.IMAGE_URL)
+    - description: ""
+      name: IMAGE_DIGEST
+      value: $(tasks.build-image-index.results.IMAGE_DIGEST)
+  tasks:
+    - name: init
+      params:
+        - name: image-url
+          value: $(params.output-image)
+        - name: rebuild
+          value: $(params.rebuild)
+        - name: skip-checks
+          value: $(params.skip-checks)
+      taskRef:
+        params:
+          - name: name
+            value: init
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-init:0.2
+          - name: kind
+            value: task
+        resolver: bundles
+    - name: clone-repository
+      params:
+        - name: url
+          value: $(params.git-url)
+        - name: revision
+          value: $(params.revision)
+      runAfter:
+        - init
+      taskRef:
+        params:
+          - name: name
+            value: git-clone
+          - name: bundle
+            value: quay.io/konflux-ci/tekton-catalog/task-git-clone:0.1
+          - name: kind
+            value: task
+        resolver: bundles
+      workspaces:
+        - name: output
+          workspace: workspace
+        - name: basic-auth
+          workspace: git-auth
+    # Additional tasks would be added here for:
+    # - Building the container image
+    # - Running the image build scripts
+    # - Creating dm-verity image
+    # - Pushing to registry
+    # Note: Full task definitions require access to actual Konflux task bundles
+  workspaces:
+    - name: workspace
+    - name: git-auth
+      optional: true
+
+# Made with Bob

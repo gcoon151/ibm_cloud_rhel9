@@ -1,0 +1,10 @@
+# Verity partition dynamically sized to 7% of root partition
+# Note: This file is a template. The actual SizeMaxBytes will be set dynamically
+# by the verity.sh script using the ${verity_max_space} variable
+[Partition]
+Type=root-verity
+Verity=hash
+VerityMatchKey=root
+PaddingWeight=1
+SizeMinBytes=64M
+SizeMaxBytes=512M

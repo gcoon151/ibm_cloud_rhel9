@@ -65,7 +65,7 @@ ADDON_SBAT="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/
 coco-podvm-uki-addon,1,Red Hat,coco-podvm-uki-addon,1,mailto:secalert@redhat.com"
 
 LUKS_MINIMAL_SPACE_MB=2500
-VERITY_MAX_SPACE_MB=512
+# VERITY_MAX_SPACE_MB=512  # Now calculated dynamically as 7% of root partition
 
 nbd_mounted=0
 esp_mounted=0
@@ -120,12 +120,15 @@ function resize_disk()
     DISK_RESIZE=$1
     MB=$((1024 * 1024))
     current_size=$(qemu-img info -f $DISK_FORMAT --output json $DISK_RESIZE | jq '."virtual-size"')
-    # new_size=$((current_size * 110 / 100)) # increase 10% for verity - obsolete
+    export current_size
     luks_min_space=$((LUKS_MINIMAL_SPACE_MB * MB))
-    verity_max_space=$((VERITY_MAX_SPACE_MB * MB))
+    # verity_max_space=$((VERITY_MAX_SPACE_MB * MB))  # Old fixed size
+    verity_max_space=$((current_size * 7 / 100))  # Dynamic: 7% of root partition
+    export verity_max_space
     new_size=$((current_size + luks_min_space + verity_max_space))
     rounded_size=$(((new_size + MB - 1) / MB * MB))
     echo "Current disk size: $current_size"
+    echo "Verity partition size (7%): $verity_max_space"
     echo "New disk size: $rounded_size"
     qemu-img resize "$DISK_RESIZE" -f $DISK_FORMAT "${rounded_size}"
 }
@@ -179,27 +182,31 @@ function apply_dmverity()
     # create config files and folders for systemd-repart and UKI
     WORKDIR=conf
     mkdir $WORKDIR
-    # Verity partition has to be 10% of the original partition (256MB).
-    # Exaggerate and give 512MB
+
+    # Verity partition has to be 7% of the original partition (dynamic sizing)
     echo "[Partition]
     Type=root-verity
     Verity=hash
     VerityMatchKey=root
     PaddingWeight=1
     SizeMinBytes=64M
-    SizeMaxBytes=${VERITY_MAX_SPACE_MB}M" > $WORKDIR/verity.conf
+    SizeMaxBytes=${verity_max_space}" > $WORKDIR/verity.conf
 
-    # Used just to reference the root
-    # Fix the root size to 2.5GB because that's what it is provided. It shouldn't grow.
+    # Used just to reference the root (use actual current size, not fixed)
     echo "[Partition]
     Type=root
     Verity=data
     VerityMatchKey=root
-    SizeMaxBytes=2560M" > $WORKDIR/root.conf
+    SizeMaxBytes=${current_size}" > $WORKDIR/root.conf
 
-    systemd-repart $NBD_DEVICE --dry-run=no --definitions=$WORKDIR --no-pager --json=pretty | jq -r '.[] | select(.type == "root-x86-64-verity") | .roothash' > $WORKDIR/roothash.txt
+    SYSTEMD_LOG_LEVEL=debug systemd-repart $NBD_DEVICE --dry-run=no --definitions=$WORKDIR --no-pager --json=pretty | jq -r '.[] | select(.type == "root-x86-64-verity") | .roothash' > $WORKDIR/roothash.txt
     RH=$(cat $WORKDIR/roothash.txt)
     rm -rf $WORKDIR
+
+    partprobe $NBD_DEVICE
+    # Allow udev events to settle again after partprobe
+    udevadm settle
+    sleep 1  # Optional small sleep just in case
 
     if [ "$RH" == "TBD" ]; then
         echo "roothash is TBD, something went wrong. Make sure the image you are using doesn't have a /verity partition already!"
@@ -219,15 +226,28 @@ function create_uki_addon()
     mount /dev/$EFI_PN mnt
     esp_mounted=1
     efi_files=($UKI_FOLDER/*.efi)
-    if [[ ${#efi_files[@]} -eq 1 && -f "${efi_files[0]}" ]]; then
-        UKI_NAME=${efi_files[0]}
-        echo "Found UKI $UKI_NAME"
-        mkdir -p "$UKI_NAME.extra.d"
-    else
-        echo "Error: Either no .efi file or multiple .efi files found."
-        echo "Cannot create the UKI addon."
+
+    # Check if any EFI files exist
+    if [[ ${#efi_files[@]} -eq 0 || ! -f "${efi_files[0]}" ]]; then
+        echo "Error: No .efi files found in $UKI_FOLDER"
         exit 1
     fi
+
+    # If multiple files, pick the most recent one
+    if [[ ${#efi_files[@]} -gt 1 ]]; then
+        echo "Found ${#efi_files[@]} EFI files: ${efi_files[@]}"
+        echo ""
+        echo "Current EFI fallback value (/boot/efi/EFI/redhat/BOOTX64.CSV):"
+        cat mnt/EFI/redhat/BOOTX64.CSV || echo "(file not found)"
+        echo ""
+        echo "Selecting the most recently modified UKI..."
+        UKI_NAME=$(ls -t "${efi_files[@]}" | head -1)
+    else
+        UKI_NAME=${efi_files[0]}
+    fi
+
+    echo "Using UKI: $UKI_NAME"
+    mkdir -p "$UKI_NAME.extra.d"
     cd $UKI_NAME.extra.d
     rm -f $ADDON_NAME
 

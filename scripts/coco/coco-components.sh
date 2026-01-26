@@ -5,9 +5,10 @@ INPUT_IMAGE=$1
 SCRIPT_FOLDER=${SCRIPT_FOLDER:-$(dirname $0)}
 SCRIPT_FOLDER=$(realpath $SCRIPT_FOLDER)
 
-PODVM_BINARY_DEF=quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload:osc-podvm-payload-on-push-rmvjh-build-image-index
+# Use digest-based references for reproducibility (update with actual RHEL 9 digest)
+PODVM_BINARY_DEF=quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload-v1-10@sha256:8d6b126c9790aa46c36d2c7317c2d776a00b9de70eb9de70eb9de70eb9de70eb
 PODVM_BINARY_LOCATION_DEF=/podvm-binaries.tar.gz
-PAUSE_BUNDLE_DEF=quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload:osc-podvm-payload-on-push-rmvjh-build-image-index
+PAUSE_BUNDLE_DEF=quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload-v1-10@sha256:8d6b126c9790aa46c36d2c7317c2d776a00b9de70eb9de70eb9de70eb9de70eb
 PAUSE_BUNDLE_LOCATION_DEF=/pause-bundle.tar.gz
 
 function local_help()
@@ -25,6 +26,8 @@ function local_help()
     echo "PAUSE_BUNDLE:          optional - registry containing pause bundle. Default: $PAUSE_BUNDLE_DEF"
     echo "PAUSE_BUNDLE_LOCATION: optional - location in container containing pause bundle. Default: $PAUSE_BUNDLE_LOCATION_DEF"
     echo "ROOT_PASSWORD:         optional - set root's password. Default: disabled"
+    echo "ACTIVATION_KEY:        optional - Red Hat activation key for subscription-manager"
+    echo "ORG_ID:                optional - Red Hat organization ID for subscription-manager"
 }
 
 PODVM_BINARY=${PODVM_BINARY:-"$PODVM_BINARY_DEF"}
@@ -79,8 +82,13 @@ ls $ARTIFACTS_FOLDER
 
 echo ""
 EXTRA_ARGS=""
+SM_REGISTER=""
 [[ -n "$ROOT_PASSWORD" ]] && EXTRA_ARGS=" --root-password password:${ROOT_PASSWORD} "
-virt-customize \
+[[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && SM_REGISTER=(--run-command "subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY}") || SM_REGISTER=()
+
+virt-customize --memsize 8192 \
+    "${SM_REGISTER[@]}" \
+    --run $ARTIFACTS_FOLDER/script-disk-mods.sh \
     --copy-in $ARTIFACTS_FOLDER/podvm-binaries.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/pause-bundle.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/luks-config.tar.gz:/tmp/ \
@@ -88,3 +96,5 @@ virt-customize \
     --uninstall WALinuxAgent \
     ${EXTRA_ARGS} \
     -a $INPUT_IMAGE
+
+[[ ${#SM_REGISTER[@]} -gt 0 ]] && virt-customize --memsize 8192 --run-command "subscription-manager unregister" -a $INPUT_IMAGE || true

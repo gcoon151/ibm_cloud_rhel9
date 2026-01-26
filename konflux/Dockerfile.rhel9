@@ -1,0 +1,18 @@
+FROM registry.redhat.io/ubi9/ubi-init@sha256:4b29d34b9e310f1b8fa93bb2c727a1efa43328f5d647d50ebefb82cc1c4197ff
+
+# Register with Red Hat subscription manager
+RUN subscription-manager register --org "$(cat /activation-key/org)" --activationkey "$(cat /activation-key/activationkey)"
+
+# Install required packages for RHEL 9 image building
+RUN dnf install -y \
+    cpio systemd-ukify jq openssl qemu-img libguestfs guestfs-tools libguestfs-tools virt-install qemu-kvm edk2-ovmf nc
+
+COPY qemu.conf /etc/libvirt/qemu.conf
+
+# to make virt-customize work
+ENV LIBGUESTFS_BACKEND=direct
+
+# Label for RHEL 9 variant
+LABEL rhel.version="9" \
+      description="RHEL 9 CoCo PodVM image builder for Konflux" \
+      maintainer="IBM Cloud Team"

@@ -1,0 +1,9 @@
+# Used just to reference the root
+# Dynamic sizing based on actual root partition size
+# Note: This file is a template. The actual SizeMaxBytes will be set dynamically
+# by the verity.sh script using the ${current_size} variable
+[Partition]
+Type=root
+Verity=data
+VerityMatchKey=root
+SizeMaxBytes=2560M
