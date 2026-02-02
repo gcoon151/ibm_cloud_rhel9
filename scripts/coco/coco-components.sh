@@ -5,9 +5,9 @@ INPUT_IMAGE=$1
 SCRIPT_FOLDER=${SCRIPT_FOLDER:-$(dirname $0)}
 SCRIPT_FOLDER=$(realpath $SCRIPT_FOLDER)
 
-PODVM_BINARY_DEF=quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload:osc-podvm-payload-on-push-rmvjh-build-image-index
+PODVM_BINARY_DEF=quay.io/rh-ee-gcoon/podvm_binaries:candidate
 PODVM_BINARY_LOCATION_DEF=/podvm-binaries.tar.gz
-PAUSE_BUNDLE_DEF=quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload:osc-podvm-payload-on-push-rmvjh-build-image-index
+PAUSE_BUNDLE_DEF=quay.io/rh-ee-gcoon/podvm_binaries:candidate
 PAUSE_BUNDLE_LOCATION_DEF=/pause-bundle.tar.gz
 
 function local_help()
