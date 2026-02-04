@@ -1,2 +1,17 @@
+# Build artifacts and binaries
 certs/
 builddir/
+*.tar.gz
+*.tar
+*.qcow2
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+*secret*
+.env
+
+# Uptycs specific - exclude binaries and configs with potential secrets
+scripts/coco/podvm/uptycs-binary.tar.gz
+scripts/coco/podvm/luks-config.tar.gz

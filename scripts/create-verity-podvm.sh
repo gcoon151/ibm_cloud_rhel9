@@ -158,6 +158,7 @@ echo ""
 echo "Calling verity..."
 export DISK_FORMAT
 export RESIZE_DISK
+export APPLY_VERITY=true
 if [[ -n "${IMAGE_PRIVATE_KEY}" && -n "${IMAGE_CERTIFICATE_PEM}" ]]; then
     export SB_PRIVATE_KEY=$IMAGE_PRIVATE_KEY
     export SB_CERTIFICATE=$IMAGE_CERTIFICATE_PEM

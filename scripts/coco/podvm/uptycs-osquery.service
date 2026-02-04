@@ -1,0 +1,15 @@
+[Unit]
+Description=Uptycs OSQuery Agent (Conditional on initdata)
+After=process-user-data.service
+Before=kata-agent.service
+ConditionPathExists=/var/run/peerpod/initdata
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/provision-uptycs.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
