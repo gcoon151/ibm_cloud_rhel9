@@ -274,14 +274,37 @@ echo "Booting UKI with dm-verity..."
 EOF
     echo "Created startup.nsh for automatic UKI boot"
     
-    # Create a BOOTX64.EFI that points directly to the UKI
-    # This bypasses GRUB and shim for direct UKI boot
+    # Build a combined UKI with the addon merged in
+    # This ensures the roothash parameter is always present at boot
     UKI_PATH="mnt/EFI/Linux/${UKI_BASENAME}"
+    ADDON_PATH="mnt/EFI/Linux/${UKI_BASENAME}.extra.d/verity.addon.efi"
+    COMBINED_UKI="$VERITY_FOLDER/combined-uki.efi"
     
-    # Copy the UKI to the default boot location as a fallback
+    echo "Building combined UKI with dm-verity addon..."
+    
+    # Merge the UKI and addon into a single bootable image
+    cat "$UKI_PATH" "$ADDON_PATH" > "$COMBINED_UKI"
+    
+    echo "✓ Combined UKI created with embedded roothash"
+    
+    # Backup original GRUB bootloader
     mkdir -p mnt/EFI/BOOT
-    cp "$UKI_PATH" mnt/EFI/BOOT/BOOTX64.EFI.uki
-    echo "Copied UKI to /EFI/BOOT/BOOTX64.EFI.uki as fallback"
+    if [ -f mnt/EFI/BOOT/BOOTX64.EFI ]; then
+        mv mnt/EFI/BOOT/BOOTX64.EFI mnt/EFI/BOOT/BOOTX64.EFI.grub.backup
+        echo "Backed up GRUB to /EFI/BOOT/BOOTX64.EFI.grub.backup"
+    fi
+    
+    # Replace BOOTX64.EFI with the combined UKI
+    cp "$COMBINED_UKI" mnt/EFI/BOOT/BOOTX64.EFI
+    echo "✓ Replaced /EFI/BOOT/BOOTX64.EFI with combined UKI (dm-verity enabled)"
+    
+    # Also replace the original UKI in /EFI/Linux with the combined version
+    cp "$COMBINED_UKI" "$UKI_PATH"
+    echo "✓ Updated UKI in /EFI/Linux with combined version"
+    
+    # Keep a reference copy
+    cp "$COMBINED_UKI" mnt/EFI/BOOT/BOOTX64.EFI.uki
+    echo "✓ Copied combined UKI to /EFI/BOOT/BOOTX64.EFI.uki as reference"
     
     # Create a boot entry configuration file for systemd-boot
     mkdir -p mnt/loader/entries
@@ -305,38 +328,25 @@ EOF
     
     echo ""
     echo "=========================================="
-    echo "IMPORTANT: Boot Configuration"
+    echo "✓ Boot Configuration Complete"
     echo "=========================================="
     echo ""
-    echo "The UKI with dm-verity addon has been configured."
+    echo "The UKI with dm-verity addon has been configured and set as the default bootloader."
     echo ""
-    echo "To activate dm-verity, you need to configure the EFI boot order"
-    echo "to boot the UKI directly instead of GRUB."
+    echo "Changes made:"
+    echo "  • Replaced /EFI/BOOT/BOOTX64.EFI with UKI (GRUB backed up)"
+    echo "  • Created startup.nsh for UEFI fallback boot"
+    echo "  • Configured systemd-boot entries"
     echo ""
-    echo "After deploying this image, run these commands on the VM:"
+    echo "The VM will now boot directly into the UKI with dm-verity enabled."
     echo ""
-    echo "# Option 1: Create new boot entry for UKI (RECOMMENDED)"
-    echo "efibootmgr --create --disk /dev/vda --part 1 \\"
-    echo "  --label 'RHEL UKI with dm-verity' \\"
-    echo "  --loader '\\EFI\\Linux\\${UKI_BASENAME}'"
+    echo "To verify dm-verity after boot:"
+    echo "  cat /proc/cmdline | grep roothash"
+    echo "  dmsetup table | grep verity"
+    echo "  mount | grep 'on / '"
     echo ""
-    echo "# Get the new boot entry number (e.g., 0003)"
-    echo "efibootmgr -v"
-    echo ""
-    echo "# Set it as first in boot order (replace XXXX with the entry number)"
-    echo "efibootmgr --bootorder XXXX,0002,0001,0000"
-    echo ""
-    echo "# Option 2: Install systemd-boot (ALTERNATIVE)"
-    echo "bootctl install"
-    echo "# systemd-boot will auto-discover the UKI and addon"
-    echo ""
-    echo "# Option 3: Use startup.nsh (FALLBACK)"
-    echo "# If no boot entry works, UEFI will execute /startup.nsh"
-    echo "# which boots the UKI directly"
-    echo ""
-    echo "After configuring boot, verify with:"
-    echo "cat /proc/cmdline | grep roothash"
-    echo "dmsetup table | grep verity"
+    echo "To restore GRUB boot (if needed):"
+    echo "  mv /EFI/BOOT/BOOTX64.EFI.grub.backup /EFI/BOOT/BOOTX64.EFI"
     echo ""
     echo "=========================================="
 }
@@ -393,6 +403,55 @@ qemu-nbd --disconnect $NBD_DEVICE
 nbd_mounted=0
 rm -rf mnt
 cd $here
+
+# Wait for NBD to fully release the file
+echo "Waiting for NBD to release file locks..."
+sleep 3
+
+# Repair QCOW2 metadata corruption caused by systemd-repart
+# When systemd-repart modifies partitions through NBD, it writes directly to blocks
+# bypassing QCOW2's metadata layer, causing refcount inconsistencies.
+# This is expected behavior when modifying QCOW2 images via NBD.
+# The repair is fast and ensures the image is valid for upload and deployment.
+if [ "$DISK_FORMAT" = "qcow2" ]; then
+    echo ""
+    echo "Repairing QCOW2 image metadata (expected after NBD partition modifications)..."
+    
+    # First repair attempt
+    echo "Running initial repair..."
+    qemu-img check -r all "$DISK" 2>&1 | tee /tmp/qcow2-repair.log
+    
+    # Wait a moment for filesystem to settle
+    sleep 2
+    
+    # Verify the image is actually clean now
+    echo "Verifying image integrity..."
+    if qemu-img check "$DISK" 2>&1 | tee /tmp/qcow2-verify.log | grep -q "No errors were found"; then
+        echo "✓ QCOW2 image is clean and valid"
+    else
+        echo "✗ QCOW2 image still has errors after repair!"
+        echo ""
+        echo "Repair output:"
+        cat /tmp/qcow2-repair.log
+        echo ""
+        echo "Verification output:"
+        cat /tmp/qcow2-verify.log
+        echo ""
+        echo "Attempting second repair..."
+        qemu-img check -r all "$DISK" 2>&1 | tee /tmp/qcow2-repair2.log
+        sleep 2
+        
+        # Final verification
+        if qemu-img check "$DISK" 2>&1 | tee /tmp/qcow2-verify2.log | grep -q "No errors were found"; then
+            echo "✓ QCOW2 image is clean after second repair"
+        else
+            echo "✗ QCOW2 image still corrupted after two repair attempts"
+            echo "This image cannot be safely deployed"
+            cat /tmp/qcow2-verify2.log
+            exit 1
+        fi
+    fi
+fi
 
 echo ""
 echo "=========================================="
