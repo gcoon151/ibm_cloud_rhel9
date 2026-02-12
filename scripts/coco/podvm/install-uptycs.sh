@@ -6,6 +6,10 @@
 
 set -euxo pipefail
 
+# Log to file for debugging
+LOGFILE="/var/log/uptycs-install.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
 echo ""
 echo "=========================================="
 echo "=== Installing Uptycs EDR Agent ==="
