@@ -52,7 +52,7 @@ fi
 # Extract uptycs.conf section from TOML structure
 # Looking for: "uptycs.conf" = '''...'''
 echo "Extracting Uptycs configuration..."
-UPTYCS_CONF=$(echo "$DECODED" | awk '/^"uptycs\.conf" = /,/^'''$/ {print}' | sed "1d;\$d")
+UPTYCS_CONF=$(echo "$DECODED" | awk '/^"uptycs\.conf" = /,/^'\'\'\''$/ {print}' | sed "1d;\$d")
 
 if [ -z "$UPTYCS_CONF" ]; then
     echo "No Uptycs configuration found in initdata, skipping"
@@ -84,22 +84,45 @@ if [ ! -f "$UPTYCS_BIN" ]; then
     exit 0
 fi
 
-# Build command with optional parameters
-UPTYCS_CMD="$UPTYCS_BIN --enrollment_secret=\"$UPTYCS_SECRET\" --backend=\"$UPTYCS_BACKEND\""
+# Create Uptycs data directories on tmpfs (dm-verity safe)
+# Using /tmp for database and logs (ephemeral, writable with dm-verity)
+UPTYCS_DATA_DIR="/tmp/uptycs"
+mkdir -p "$UPTYCS_DATA_DIR"/{db,logs}
+echo "Created Uptycs data directories at $UPTYCS_DATA_DIR"
 
-if [ -n "$UPTYCS_TAGS" ]; then
-    UPTYCS_CMD="$UPTYCS_CMD --tags=\"$UPTYCS_TAGS\""
+# Write enrollment secret to file (osqueryd expects --enroll_secret_path)
+ENROLL_SECRET_FILE="/var/run/peerpod/enroll.secret"
+echo "$UPTYCS_SECRET" > "$ENROLL_SECRET_FILE"
+chmod 600 "$ENROLL_SECRET_FILE"
+
+# Build command with correct Uptycs osqueryd flags
+# Using tmpfs storage paths (dm-verity compatible)
+# Core required flags only (no debug flags for production)
+UPTYCS_CMD="$UPTYCS_BIN -D --disable_watchdog"
+UPTYCS_CMD="$UPTYCS_CMD --database_path=\"$UPTYCS_DATA_DIR/db\""
+UPTYCS_CMD="$UPTYCS_CMD --logger_path=\"$UPTYCS_DATA_DIR/logs\""
+UPTYCS_CMD="$UPTYCS_CMD --enroll_secret_path=\"$ENROLL_SECRET_FILE\""
+
+# Add backend/server
+if [ -n "$UPTYCS_BACKEND" ]; then
+    UPTYCS_CMD="$UPTYCS_CMD --tls_hostname=\"$UPTYCS_BACKEND\""
 fi
 
+# Add tags if specified (using host_identifier)
+if [ -n "$UPTYCS_TAGS" ]; then
+    UPTYCS_CMD="$UPTYCS_CMD --host_identifier=\"$UPTYCS_TAGS\""
+fi
+
+# Add proxy if specified
 if [ -n "$UPTYCS_PROXY" ]; then
-    UPTYCS_CMD="$UPTYCS_CMD --proxy=\"$UPTYCS_PROXY\""
+    UPTYCS_CMD="$UPTYCS_CMD --proxy_hostname=\"$UPTYCS_PROXY\""
 fi
 
 echo "Uptycs configuration extracted successfully"
 echo "Starting Uptycs OSQuery agent..."
 echo "Command: $UPTYCS_CMD"
 
-# Launch Uptycs in background
+# Launch Uptycs in background (no -D flag, using & instead)
 eval "$UPTYCS_CMD" &
 
 echo "Uptycs provisioning completed successfully"

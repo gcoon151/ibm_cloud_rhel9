@@ -2,9 +2,12 @@
 # Install Uptycs EDR agent into PodVM image
 # This script runs during virt-customize (image build time)
 # It installs the Uptycs binary and sets up the systemd service
-# The actual configuration happens at runtime via provision-uptycs.sh
 
-set -euxo pipefail
+set -e
+
+# Log to file for debugging
+LOGFILE="/var/log/uptycs-install.log"
+exec >> "$LOGFILE" 2>&1
 
 echo ""
 echo "=========================================="
@@ -15,7 +18,7 @@ echo ""
 
 # List files in /tmp to verify they were copied
 echo "Files in /tmp:"
-ls -lh /tmp/ | grep -E "(uptycs|provision)" || echo "No Uptycs files found!"
+ls -lh /tmp/ | grep -E "(uptycs|provision)" || true
 echo ""
 
 # Check if Uptycs binary tarball exists (copied to /tmp/ by virt-customize)
@@ -46,7 +49,13 @@ if [ ! -f /opt/uptycs/bin/osqueryd ]; then
 fi
 
 chmod +x /opt/uptycs/bin/osqueryd
-echo "✓ Binary is executable"
+
+# Fix ownership and permissions (osqueryd requires root:root with no group/other write)
+echo "Setting secure ownership and permissions..."
+chown root:root /opt/uptycs/bin/osqueryd
+chmod 755 /opt/uptycs/bin/osqueryd
+chmod go-w /opt/uptycs/bin/osqueryd
+echo "✓ Binary is executable with secure permissions"
 
 # Verify it's a valid ELF binary
 echo "Binary info:"
@@ -98,5 +107,5 @@ echo "  1. Check for /var/run/peerpod/initdata"
 echo "  2. Extract Uptycs configuration from initdata"
 echo "  3. Start osqueryd with the extracted config"
 echo ""
-
-# Made with Bob
+echo "Full installation log saved to: $LOGFILE"
+echo ""

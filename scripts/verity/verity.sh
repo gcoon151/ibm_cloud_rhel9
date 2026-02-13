@@ -6,7 +6,6 @@ set -e
 # Optional vars just for debug:
 # CONSOLE_KERNEL= whether to add console=ttyS0 to /EFI/redhat/BOOTX64.CSV
 # APPLY_VERITY= whether to add apply dm-verity and create addon
-# CONFIGURE_BOOT_ORDER= whether to configure EFI boot order to use UKI directly (default: true)
 
 DISK=${DISK:-$1}
 
@@ -20,7 +19,6 @@ function local_help()
     echo "2. create a new partition containing dm-verity hash tree of the root disk"
     echo "3. generate an UKI addon containing the verity root hash as kernel cmdline parameter"
     echo "4. put the addon in the ESP"
-    echo "5. configure EFI boot order to boot UKI directly (bypassing GRUB)"
     echo "The resulting disk image is verity-protected and "
     echo "the root disk is overlayed by a tmpfs, which makes the root RW again but "
     echo "changes into that are not persistent after reboot."
@@ -28,15 +26,14 @@ function local_help()
     echo "The unallocated space has to be at least 10% of the root partition size."
     echo ""
     echo "Options (define them as variable):"
-    echo "DISK:                  mandatory - (var or arg) path of disk where to apply dm-verity. Must have 10% of the root disk unallocated."
-    echo "DISK_FORMAT:           mandatory - disk format, can be qcow2, raw, vpc..."
-    echo "RESIZE_DISK:           optional  - whether to increase disk size by 10% to accomodate verity partition. Default: yes"
-    echo "SB_PRIVATE_KEY:        optional  - key to sign the verity cmdline addon. Default: don't sign"
-    echo "SB_CERTIFICATE:        optional  - certificate in PEM format to upload in the gallery. Default: don't sign"
-    echo "NBD_DEV:               optional  - nbd\$NBD_DEV where to temporarily mount the disk. Default: 0"
-    echo "VERITY_FOLDER:         optional  - where to create verity artifacts. Defaults to a temp folder in /tmp"
-    echo "ROOT_PARTITION_UUID:   optional  - UUID to find the root. Defaults to the x86_64 part type"
-    echo "CONFIGURE_BOOT_ORDER:  optional  - whether to configure EFI boot order for UKI. Default: true"
+    echo "DISK:                mandatory - (var or arg) path of disk where to apply dm-verity. Must have 10% of the root disk unallocated."
+    echo "DISK_FORMAT:         mandatory - disk format, can be qcow2, raw, vpc..."
+    echo "RESIZE_DISK:         optional  - whether to increase disk size by 10% to accomodate verity partition. Default: yes"
+    echo "SB_PRIVATE_KEY:      optional  - key to sign the verity cmdline addon. Default: don't sign"
+    echo "SB_CERTIFICATE:      optional  - certificate in PEM format to upload in the gallery. Default: don't sign"
+    echo "NBD_DEV:             optional  - nbd\$NBD_DEV where to temporarily mount the disk. Default: 0"
+    echo "VERITY_FOLDER:       optional  - where to create verity artifacts. Defaults to a temp folder in /tmp"
+    echo "ROOT_PARTITION_UUID: optional  - UUID to find the root. Defaults to the x86_64 part type"
     echo ""
     echo "Exiting"
 }
@@ -80,7 +77,6 @@ function print_params()
     echo "DISK: $DISK"
     echo "DISK_FORMAT: $DISK_FORMAT"
     echo "RESIZE_DISK: $RESIZE_DISK"
-    echo "CONFIGURE_BOOT_ORDER: $CONFIGURE_BOOT_ORDER"
     if [[ -n "${SB_PRIVATE_KEY}" && -n "${SB_CERTIFICATE}" ]]; then
         echo "SB_PRIVATE_KEY: $SB_PRIVATE_KEY"
         echo "SB_CERTIFICATE: $SB_CERTIFICATE"
@@ -111,7 +107,6 @@ trap handle_ctrlc EXIT
 DISK_FORMAT=${DISK_FORMAT:-"raw"}
 APPLY_VERITY=${APPLY_VERITY:-"true"}
 CONSOLE_KERNEL=${CONSOLE_KERNEL:-"false"}
-CONFIGURE_BOOT_ORDER=${CONFIGURE_BOOT_ORDER:-"true"}
 ROOT_PARTITION_UUID=${ROOT_PARTITION_UUID:-"4f68bce3-e8cd-4db1-96e7-fbcaf984b709"}
 NBD_DEV=${NBD_DEV:-"0"}
 NBD_DEVICE=/dev/nbd${NBD_DEV}
@@ -243,112 +238,9 @@ function create_uki_addon()
     /usr/lib/systemd/ukify build --cmdline="roothash=$RH systemd.volatile=overlay" --output=$ADDON_NAME --sbat="$ADDON_SBAT" $ADDON_OPTIONS
     echo "Created UKI addon $UKI_NAME.extra.d/$ADDON_NAME"
     /usr/lib/systemd/ukify inspect $ADDON_NAME
-    
-    # Store the UKI filename for boot configuration
-    UKI_BASENAME=$(basename "$UKI_NAME")
-    export UKI_BASENAME
-    
     cd - > /dev/null
     esp_mounted=0
     umount mnt
-}
-
-function configure_uki_boot()
-{
-    echo ""
-    echo "Configuring EFI boot order to use UKI directly..."
-    
-    mount /dev/$EFI_PN mnt
-    esp_mounted=1
-    
-    # Get the EFI partition UUID
-    EFI_PART_UUID=$(blkid -s PARTUUID -o value /dev/$EFI_PN)
-    echo "EFI Partition UUID: $EFI_PART_UUID"
-    
-    # Create a startup.nsh script to boot the UKI directly
-    # This will be executed automatically by UEFI if no other boot option works
-    cat > mnt/startup.nsh << EOF
-@echo -off
-echo "Booting UKI with dm-verity..."
-\EFI\Linux\\${UKI_BASENAME}
-EOF
-    echo "Created startup.nsh for automatic UKI boot"
-    
-    # Build a combined UKI with the addon merged in
-    # This ensures the roothash parameter is always present at boot
-    UKI_PATH="mnt/EFI/Linux/${UKI_BASENAME}"
-    ADDON_PATH="mnt/EFI/Linux/${UKI_BASENAME}.extra.d/verity.addon.efi"
-    COMBINED_UKI="$VERITY_FOLDER/combined-uki.efi"
-    
-    echo "Building combined UKI with dm-verity addon..."
-    
-    # Merge the UKI and addon into a single bootable image
-    cat "$UKI_PATH" "$ADDON_PATH" > "$COMBINED_UKI"
-    
-    echo "✓ Combined UKI created with embedded roothash"
-    
-    # Backup original GRUB bootloader
-    mkdir -p mnt/EFI/BOOT
-    if [ -f mnt/EFI/BOOT/BOOTX64.EFI ]; then
-        mv mnt/EFI/BOOT/BOOTX64.EFI mnt/EFI/BOOT/BOOTX64.EFI.grub.backup
-        echo "Backed up GRUB to /EFI/BOOT/BOOTX64.EFI.grub.backup"
-    fi
-    
-    # Replace BOOTX64.EFI with the combined UKI
-    cp "$COMBINED_UKI" mnt/EFI/BOOT/BOOTX64.EFI
-    echo "✓ Replaced /EFI/BOOT/BOOTX64.EFI with combined UKI (dm-verity enabled)"
-    
-    # Also replace the original UKI in /EFI/Linux with the combined version
-    cp "$COMBINED_UKI" "$UKI_PATH"
-    echo "✓ Updated UKI in /EFI/Linux with combined version"
-    
-    # Keep a reference copy
-    cp "$COMBINED_UKI" mnt/EFI/BOOT/BOOTX64.EFI.uki
-    echo "✓ Copied combined UKI to /EFI/BOOT/BOOTX64.EFI.uki as reference"
-    
-    # Create a boot entry configuration file for systemd-boot
-    mkdir -p mnt/loader/entries
-    cat > mnt/loader/entries/uki-verity.conf << EOF
-title   RHEL with dm-verity
-efi     /EFI/Linux/${UKI_BASENAME}
-EOF
-    echo "Created systemd-boot entry configuration"
-    
-    # Create loader.conf for systemd-boot
-    cat > mnt/loader/loader.conf << EOF
-default uki-verity.conf
-timeout 3
-console-mode max
-editor no
-EOF
-    echo "Created systemd-boot loader configuration"
-    
-    esp_mounted=0
-    umount mnt
-    
-    echo ""
-    echo "=========================================="
-    echo "✓ Boot Configuration Complete"
-    echo "=========================================="
-    echo ""
-    echo "The UKI with dm-verity addon has been configured and set as the default bootloader."
-    echo ""
-    echo "Changes made:"
-    echo "  • Replaced /EFI/BOOT/BOOTX64.EFI with UKI (GRUB backed up)"
-    echo "  • Created startup.nsh for UEFI fallback boot"
-    echo "  • Configured systemd-boot entries"
-    echo ""
-    echo "The VM will now boot directly into the UKI with dm-verity enabled."
-    echo ""
-    echo "To verify dm-verity after boot:"
-    echo "  cat /proc/cmdline | grep roothash"
-    echo "  dmsetup table | grep verity"
-    echo "  mount | grep 'on / '"
-    echo ""
-    echo "To restore GRUB boot (if needed):"
-    echo "  mv /EFI/BOOT/BOOTX64.EFI.grub.backup /EFI/BOOT/BOOTX64.EFI"
-    echo ""
-    echo "=========================================="
 }
 
 print_params
@@ -390,11 +282,6 @@ if [ "$APPLY_VERITY" = "true" ]; then
     # Step 4. Prepare and install the addon
     echo ""
     create_uki_addon
-    
-    # Step 5. Configure boot order for UKI
-    if [ "$CONFIGURE_BOOT_ORDER" = "true" ]; then
-        configure_uki_boot
-    fi
 fi
 
 
@@ -403,71 +290,3 @@ qemu-nbd --disconnect $NBD_DEVICE
 nbd_mounted=0
 rm -rf mnt
 cd $here
-
-# Wait for NBD to fully release the file
-echo "Waiting for NBD to release file locks..."
-sleep 3
-
-# Repair QCOW2 metadata corruption caused by systemd-repart
-# When systemd-repart modifies partitions through NBD, it writes directly to blocks
-# bypassing QCOW2's metadata layer, causing refcount inconsistencies.
-# This is expected behavior when modifying QCOW2 images via NBD.
-# The repair is fast and ensures the image is valid for upload and deployment.
-if [ "$DISK_FORMAT" = "qcow2" ]; then
-    echo ""
-    echo "Repairing QCOW2 image metadata (expected after NBD partition modifications)..."
-    
-    # First repair attempt
-    echo "Running initial repair..."
-    qemu-img check -r all "$DISK" 2>&1 | tee /tmp/qcow2-repair.log
-    
-    # Wait a moment for filesystem to settle
-    sleep 2
-    
-    # Verify the image is actually clean now
-    echo "Verifying image integrity..."
-    if qemu-img check "$DISK" 2>&1 | tee /tmp/qcow2-verify.log | grep -q "No errors were found"; then
-        echo "✓ QCOW2 image is clean and valid"
-    else
-        echo "✗ QCOW2 image still has errors after repair!"
-        echo ""
-        echo "Repair output:"
-        cat /tmp/qcow2-repair.log
-        echo ""
-        echo "Verification output:"
-        cat /tmp/qcow2-verify.log
-        echo ""
-        echo "Attempting second repair..."
-        qemu-img check -r all "$DISK" 2>&1 | tee /tmp/qcow2-repair2.log
-        sleep 2
-        
-        # Final verification
-        if qemu-img check "$DISK" 2>&1 | tee /tmp/qcow2-verify2.log | grep -q "No errors were found"; then
-            echo "✓ QCOW2 image is clean after second repair"
-        else
-            echo "✗ QCOW2 image still corrupted after two repair attempts"
-            echo "This image cannot be safely deployed"
-            cat /tmp/qcow2-verify2.log
-            exit 1
-        fi
-    fi
-fi
-
-echo ""
-echo "=========================================="
-echo "dm-verity configuration complete!"
-echo "=========================================="
-echo ""
-echo "Root hash: $RH"
-echo "UKI file: /EFI/Linux/${UKI_BASENAME}"
-echo "Addon file: /EFI/Linux/${UKI_BASENAME}.extra.d/verity.addon.efi"
-echo ""
-echo "Next steps:"
-echo "1. Deploy this image to your cloud environment"
-echo "2. Boot the VM and configure EFI boot order (see instructions above)"
-echo "3. Reboot and verify dm-verity is active"
-echo "4. Update trustee with root hash: $RH"
-echo "5. Update Kata policy to enforce dm-verity verification"
-echo ""
-
-# Made with Bob
