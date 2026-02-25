@@ -76,6 +76,37 @@ else
 fi
 echo ""
 
+# Create symlinks for /etc/osquery and /var/log/osquery to tmpfs locations
+# This must happen BEFORE dm-verity signing
+echo "Creating symlinks for dm-verity compatibility..."
+
+# Create tmpfs target directories
+mkdir -p /run/osquery/etc
+mkdir -p /run/osquery/logs
+
+# Create /etc/osquery as symlink to /run/osquery/etc
+if [ -d /etc/osquery ]; then
+    echo "WARNING: /etc/osquery already exists, removing..."
+    rm -rf /etc/osquery
+fi
+ln -s /run/osquery/etc /etc/osquery
+echo "✓ Created symlink: /etc/osquery -> /run/osquery/etc"
+
+# Create /var/log/osquery as symlink to /run/osquery/logs
+mkdir -p /var/log
+if [ -d /var/log/osquery ]; then
+    echo "WARNING: /var/log/osquery already exists, removing..."
+    rm -rf /var/log/osquery
+fi
+ln -s /run/osquery/logs /var/log/osquery
+echo "✓ Created symlink: /var/log/osquery -> /run/osquery/logs"
+
+# Verify symlinks
+echo "Verifying symlinks:"
+ls -la /etc/osquery
+ls -la /var/log/osquery
+echo ""
+
 # Install the provisioning script that will run at boot
 echo "Installing provisioning script..."
 if [ -f /tmp/provision-uptycs.sh ]; then

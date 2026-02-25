@@ -1,33 +1,33 @@
 #!/bin/bash
 # Provision Uptycs OSQuery Agent from initdata
-# This script extracts Uptycs configuration from initdata and starts the agent if config is present
+# This script extracts Uptycs configuration from initdata and starts the agent
 # Exits gracefully (exit 0) if initdata is missing or Uptycs config is not present
 
 # Don't exit on error - we want to handle errors gracefully
-# set -e removed for RHEL 9.7 compatibility
+set +e
 
 INITDATA_FILE="/run/peerpod/initdata"
-UPTYCS_CONFIG="/run/peerpod/uptycs.conf"
 UPTYCS_BIN="/opt/uptycs/bin/osqueryd"
+
+# Target directories (symlinked to /run/osquery/* for dm-verity compatibility)
+OSQUERY_ETC="/etc/osquery"
+OSQUERY_LOGS="/var/log/osquery"
 
 echo "Starting Uptycs provisioning..."
 
 # Check for required commands
 if ! command -v base64 >/dev/null 2>&1; then
     echo "ERROR: base64 command not found (coreutils package missing)"
-    echo "Uptycs provisioning cannot proceed without base64"
     exit 0
 fi
 
 if ! command -v gzip >/dev/null 2>&1; then
     echo "ERROR: gzip command not found (gzip package missing)"
-    echo "Uptycs provisioning cannot proceed without gzip"
     exit 0
 fi
 
 if ! command -v awk >/dev/null 2>&1; then
     echo "ERROR: awk command not found (gawk package missing)"
-    echo "Uptycs provisioning cannot proceed without awk"
     exit 0
 fi
 
@@ -40,7 +40,6 @@ if [ ! -f "$INITDATA_FILE" ]; then
 fi
 
 # Decode and decompress initdata
-# RHEL 9.7 includes: coreutils (base64), gzip
 echo "Decoding initdata..."
 DECODED=$(cat "$INITDATA_FILE" | base64 -d 2>/dev/null | gzip -d 2>/dev/null)
 
@@ -50,7 +49,6 @@ if [ $? -ne 0 ] || [ -z "$DECODED" ]; then
 fi
 
 # Extract uptycs.conf section from TOML structure
-# Looking for: "uptycs.conf" = '''...'''
 echo "Extracting Uptycs configuration..."
 UPTYCS_CONF=$(echo "$DECODED" | awk '/^"uptycs\.conf" = /,/^'\'\'\''$/ {print}' | sed "1d;\$d")
 
@@ -59,13 +57,12 @@ if [ -z "$UPTYCS_CONF" ]; then
     exit 0
 fi
 
-# Write configuration to ephemeral location (dm-verity safe)
-echo "Writing Uptycs configuration to $UPTYCS_CONFIG..."
-# /run/peerpod already exists (created by process-user-data.service)
-echo "$UPTYCS_CONF" > "$UPTYCS_CONFIG"
+# Write configuration to temporary location
+TEMP_CONFIG="/run/peerpod/uptycs.conf"
+echo "$UPTYCS_CONF" > "$TEMP_CONFIG"
 
 # Source the configuration
-source "$UPTYCS_CONFIG"
+source "$TEMP_CONFIG"
 
 # Verify required variables
 if [ -z "$UPTYCS_SECRET" ]; then
@@ -84,48 +81,95 @@ if [ ! -f "$UPTYCS_BIN" ]; then
     exit 0
 fi
 
-# Create Uptycs data directories on tmpfs (dm-verity safe)
-# Using /tmp for database and logs (ephemeral, writable with dm-verity)
-UPTYCS_DATA_DIR="/tmp/uptycs"
-mkdir -p "$UPTYCS_DATA_DIR"/{db,logs}
-echo "Created Uptycs data directories at $UPTYCS_DATA_DIR"
-
-# Write enrollment secret to file (osqueryd expects --enroll_secret_path)
-ENROLL_SECRET_FILE="/run/peerpod/enroll.secret"
-echo "$UPTYCS_SECRET" > "$ENROLL_SECRET_FILE"
-chmod 600 "$ENROLL_SECRET_FILE"
-
-# Build command with correct Uptycs osqueryd flags
-# Using tmpfs storage paths (dm-verity compatible)
-# Core required flags only (no debug flags for production)
-UPTYCS_CMD="$UPTYCS_BIN -D --disable_watchdog"
-UPTYCS_CMD="$UPTYCS_CMD --database_path=\"$UPTYCS_DATA_DIR/db\""
-UPTYCS_CMD="$UPTYCS_CMD --logger_path=\"$UPTYCS_DATA_DIR/logs\""
-UPTYCS_CMD="$UPTYCS_CMD --enroll_secret_path=\"$ENROLL_SECRET_FILE\""
-UPTYCS_CMD="$UPTYCS_CMD --config_plugin=tls"
-UPTYCS_CMD="$UPTYCS_CMD --config_path=\"$UPTYCS_DATA_DIR/osquery.conf\""
-
-# Add backend/server
-if [ -n "$UPTYCS_BACKEND" ]; then
-    UPTYCS_CMD="$UPTYCS_CMD --tls_hostname=\"$UPTYCS_BACKEND\""
+# Ensure /etc/osquery directory exists (should be symlink to /run/osquery/etc)
+if [ ! -d "$OSQUERY_ETC" ]; then
+    echo "ERROR: $OSQUERY_ETC directory does not exist"
+    echo "This should have been created as a symlink during image build"
+    exit 0
 fi
 
-# Add tags if specified (using host_identifier)
+# Create required files in /etc/osquery/
+echo "Creating Uptycs configuration files..."
+
+# 1. Create uptycs.secret file
+echo "$UPTYCS_SECRET" > "$OSQUERY_ETC/uptycs.secret"
+chmod 600 "$OSQUERY_ETC/uptycs.secret"
+echo "✓ Created $OSQUERY_ETC/uptycs.secret"
+
+# 2. Create osquery.conf file (empty for now, will be populated by TLS config plugin)
+touch "$OSQUERY_ETC/osquery.conf"
+chmod 644 "$OSQUERY_ETC/osquery.conf"
+echo "✓ Created $OSQUERY_ETC/osquery.conf"
+
+# 3. Create osquery.flags file
+# TODO: Get actual flags from EDR team
+cat > "$OSQUERY_ETC/osquery.flags" <<EOF
+# Uptycs OSQuery Flags
+# TODO: Add actual flags provided by EDR team
+--tls_hostname=$UPTYCS_BACKEND
+--enroll_secret_path=$OSQUERY_ETC/uptycs.secret
+--config_plugin=tls
+--logger_plugin=tls
+--disable_distributed=false
+--distributed_plugin=tls
+--disable_audit=false
+--audit_allow_config=true
+--audit_persist=true
+--disable_events=false
+--disable_tables=false
+EOF
+
+# Add tags if specified
 if [ -n "$UPTYCS_TAGS" ]; then
-    UPTYCS_CMD="$UPTYCS_CMD --host_identifier=\"$UPTYCS_TAGS\""
+    echo "--host_identifier=$UPTYCS_TAGS" >> "$OSQUERY_ETC/osquery.flags"
+    # Also create uptycs_tags file
+    echo "$UPTYCS_TAGS" > "$OSQUERY_ETC/uptycs_tags"
+    echo "✓ Created $OSQUERY_ETC/uptycs_tags"
 fi
 
 # Add proxy if specified
 if [ -n "$UPTYCS_PROXY" ]; then
-    UPTYCS_CMD="$UPTYCS_CMD --proxy_hostname=\"$UPTYCS_PROXY\""
+    echo "--proxy_hostname=$UPTYCS_PROXY" >> "$OSQUERY_ETC/osquery.flags"
 fi
 
-echo "Uptycs configuration extracted successfully"
+chmod 644 "$OSQUERY_ETC/osquery.flags"
+echo "✓ Created $OSQUERY_ETC/osquery.flags"
+
+# 4. Copy CA certificate if it exists
+if [ -f /usr/share/osquery/certs/certs.pem ]; then
+    cp /usr/share/osquery/certs/certs.pem "$OSQUERY_ETC/ca.crt"
+    chmod 644 "$OSQUERY_ETC/ca.crt"
+    echo "✓ Copied CA certificate to $OSQUERY_ETC/ca.crt"
+fi
+
+# Verify all required files exist
+echo ""
+echo "Verifying /etc/osquery directory contents:"
+ls -la "$OSQUERY_ETC/"
+echo ""
+
+# Ensure log directory exists
+mkdir -p "$OSQUERY_LOGS"
+echo "✓ Log directory ready at $OSQUERY_LOGS"
+
+echo "Uptycs configuration complete"
 echo "Starting Uptycs OSQuery agent..."
+
+# Launch Uptycs with new command format
+# Using --flagfile and --config_path as specified by EDR team
+UPTYCS_CMD="$UPTYCS_BIN --flagfile $OSQUERY_ETC/osquery.flags --config_path $OSQUERY_ETC/osquery.conf"
+
+# Add tags via command line if specified
+if [ -n "$UPTYCS_TAGS" ]; then
+    UPTYCS_CMD="$UPTYCS_CMD --osquery_tags \"$UPTYCS_TAGS\""
+fi
+
 echo "Command: $UPTYCS_CMD"
+echo ""
+echo "Logs will be written to: $OSQUERY_LOGS/osqueryd.worker.log"
+echo ""
 
 # Launch Uptycs in foreground (systemd will manage as daemon)
-# Using exec to replace the shell process with osqueryd
 exec $UPTYCS_CMD
 
 # Made with Bob
