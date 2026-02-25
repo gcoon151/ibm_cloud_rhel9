@@ -6,8 +6,8 @@
 # Don't exit on error - we want to handle errors gracefully
 # set -e removed for RHEL 9.7 compatibility
 
-INITDATA_FILE="/var/run/peerpod/initdata"
-UPTYCS_CONFIG="/var/run/peerpod/uptycs.conf"
+INITDATA_FILE="/run/peerpod/initdata"
+UPTYCS_CONFIG="/run/peerpod/uptycs.conf"
 UPTYCS_BIN="/opt/uptycs/bin/osqueryd"
 
 echo "Starting Uptycs provisioning..."
@@ -61,7 +61,7 @@ fi
 
 # Write configuration to ephemeral location (dm-verity safe)
 echo "Writing Uptycs configuration to $UPTYCS_CONFIG..."
-# /var/run/peerpod already exists (created by process-user-data.service)
+# /run/peerpod already exists (created by process-user-data.service)
 echo "$UPTYCS_CONF" > "$UPTYCS_CONFIG"
 
 # Source the configuration
@@ -91,7 +91,7 @@ mkdir -p "$UPTYCS_DATA_DIR"/{db,logs}
 echo "Created Uptycs data directories at $UPTYCS_DATA_DIR"
 
 # Write enrollment secret to file (osqueryd expects --enroll_secret_path)
-ENROLL_SECRET_FILE="/var/run/peerpod/enroll.secret"
+ENROLL_SECRET_FILE="/run/peerpod/enroll.secret"
 echo "$UPTYCS_SECRET" > "$ENROLL_SECRET_FILE"
 chmod 600 "$ENROLL_SECRET_FILE"
 
@@ -102,6 +102,8 @@ UPTYCS_CMD="$UPTYCS_BIN -D --disable_watchdog"
 UPTYCS_CMD="$UPTYCS_CMD --database_path=\"$UPTYCS_DATA_DIR/db\""
 UPTYCS_CMD="$UPTYCS_CMD --logger_path=\"$UPTYCS_DATA_DIR/logs\""
 UPTYCS_CMD="$UPTYCS_CMD --enroll_secret_path=\"$ENROLL_SECRET_FILE\""
+UPTYCS_CMD="$UPTYCS_CMD --config_plugin=tls"
+UPTYCS_CMD="$UPTYCS_CMD --config_path=\"$UPTYCS_DATA_DIR/osquery.conf\""
 
 # Add backend/server
 if [ -n "$UPTYCS_BACKEND" ]; then
@@ -122,9 +124,8 @@ echo "Uptycs configuration extracted successfully"
 echo "Starting Uptycs OSQuery agent..."
 echo "Command: $UPTYCS_CMD"
 
-# Launch Uptycs in background (no -D flag, using & instead)
-eval "$UPTYCS_CMD" &
-
-echo "Uptycs provisioning completed successfully"
+# Launch Uptycs in foreground (systemd will manage as daemon)
+# Using exec to replace the shell process with osqueryd
+exec $UPTYCS_CMD
 
 # Made with Bob

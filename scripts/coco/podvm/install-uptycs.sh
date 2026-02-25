@@ -63,6 +63,19 @@ file /opt/uptycs/bin/osqueryd
 ls -lh /opt/uptycs/bin/osqueryd
 echo ""
 
+# Install CA certificate for TLS verification
+echo "Installing CA certificate..."
+if [ -f /opt/uptycs/etc/ca.crt ]; then
+    mkdir -p /usr/share/osquery/certs
+    cp /opt/uptycs/etc/ca.crt /usr/share/osquery/certs/certs.pem
+    chmod 644 /usr/share/osquery/certs/certs.pem
+    echo "✓ CA certificate installed to /usr/share/osquery/certs/certs.pem"
+else
+    echo "WARNING: CA certificate not found at /opt/uptycs/etc/ca.crt"
+    echo "TLS enrollment may fail without proper certificates"
+fi
+echo ""
+
 # Install the provisioning script that will run at boot
 echo "Installing provisioning script..."
 if [ -f /tmp/provision-uptycs.sh ]; then
