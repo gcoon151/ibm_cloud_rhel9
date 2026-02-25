@@ -76,35 +76,47 @@ else
 fi
 echo ""
 
-# Create symlinks for /etc/osquery and /var/log/osquery to tmpfs locations
+# Create symlinks for /etc/osquery, /var/log/osquery, and /var/osquery to tmpfs locations
 # This must happen BEFORE dm-verity signing
 echo "Creating symlinks for dm-verity compatibility..."
 
-# Create tmpfs target directories
-mkdir -p /run/osquery/etc
-mkdir -p /run/osquery/logs
+# Create tmpfs target directories in /var/run (which is typically tmpfs)
+# Note: /run and /var/run are usually the same (symlinked) on modern Linux
+mkdir -p /var/run/osquery/etc
+mkdir -p /var/run/osquery/logs
+mkdir -p /var/run/osquery/db
 
-# Create /etc/osquery as symlink to /run/osquery/etc
+# Create /etc/osquery as symlink to /var/run/osquery/etc
 if [ -d /etc/osquery ]; then
     echo "WARNING: /etc/osquery already exists, removing..."
     rm -rf /etc/osquery
 fi
-ln -s /run/osquery/etc /etc/osquery
-echo "✓ Created symlink: /etc/osquery -> /run/osquery/etc"
+ln -s /var/run/osquery/etc /etc/osquery
+echo "✓ Created symlink: /etc/osquery -> /var/run/osquery/etc"
 
-# Create /var/log/osquery as symlink to /run/osquery/logs
+# Create /var/log/osquery as symlink to /var/run/osquery/logs
 mkdir -p /var/log
 if [ -d /var/log/osquery ]; then
     echo "WARNING: /var/log/osquery already exists, removing..."
     rm -rf /var/log/osquery
 fi
-ln -s /run/osquery/logs /var/log/osquery
-echo "✓ Created symlink: /var/log/osquery -> /run/osquery/logs"
+ln -s /var/run/osquery/logs /var/log/osquery
+echo "✓ Created symlink: /var/log/osquery -> /var/run/osquery/logs"
+
+# Create /var/osquery as symlink to /var/run/osquery/db (for database)
+mkdir -p /var
+if [ -d /var/osquery ]; then
+    echo "WARNING: /var/osquery already exists, removing..."
+    rm -rf /var/osquery
+fi
+ln -s /var/run/osquery/db /var/osquery
+echo "✓ Created symlink: /var/osquery -> /var/run/osquery/db"
 
 # Verify symlinks
 echo "Verifying symlinks:"
 ls -la /etc/osquery
 ls -la /var/log/osquery
+ls -la /var/osquery
 echo ""
 
 # Install the provisioning script that will run at boot
