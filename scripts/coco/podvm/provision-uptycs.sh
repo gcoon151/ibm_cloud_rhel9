@@ -7,7 +7,7 @@
 set +e
 
 INITDATA_FILE="/run/peerpod/initdata"
-UPTYCS_BIN="/opt/uptycs/bin/osqueryd"
+UPTYCS_BIN="/usr/bin/osqueryd"
 
 # Target directories (symlinked to /var/run/osquery/* for dm-verity compatibility)
 OSQUERY_ETC="/etc/osquery"
@@ -82,17 +82,71 @@ if [ ! -f "$UPTYCS_BIN" ]; then
     exit 0
 fi
 
-# Ensure /etc/osquery directory exists (should be symlink to /run/osquery/etc)
-if [ ! -d "$OSQUERY_ETC" ]; then
-    echo "ERROR: $OSQUERY_ETC directory does not exist"
-    echo "This should have been created as a symlink during image build"
+# Create the actual target directories in /var/run/osquery/
+# The symlinks were created during image build, but the targets need to be created at runtime
+# Structure mirrors the original Uptycs installation paths
+echo "Creating runtime directories for Uptycs..."
+mkdir -p /var/run/osquery/etc/osquery
+mkdir -p /var/run/osquery/var/log/osquery
+mkdir -p /var/run/osquery/var/osquery
+
+# Verify symlinks exist and point to correct locations
+echo "Verifying symlink structure:"
+if [ ! -L /etc/osquery ]; then
+    echo "ERROR: /etc/osquery is not a symlink"
+    echo "Expected: /etc/osquery -> /var/run/osquery/etc/osquery"
+    ls -la /etc/ | grep osquery || true
     exit 0
 fi
+
+if [ ! -L /var/log/osquery ]; then
+    echo "ERROR: /var/log/osquery is not a symlink"
+    echo "Expected: /var/log/osquery -> /var/run/osquery/var/log/osquery"
+    ls -la /var/log/ | grep osquery || true
+    exit 0
+fi
+
+if [ ! -L /var/osquery ]; then
+    echo "ERROR: /var/osquery is not a symlink"
+    echo "Expected: /var/osquery -> /var/run/osquery/var/osquery"
+    ls -la /var/ | grep osquery || true
+    exit 0
+fi
+
+# Verify directories are accessible through symlinks
+if [ ! -d "$OSQUERY_ETC" ]; then
+    echo "ERROR: $OSQUERY_ETC directory not accessible after creating target"
+    echo "Symlink info:"
+    ls -la "$OSQUERY_ETC" || true
+    echo "Target directory:"
+    ls -la /var/run/osquery/ || true
+    exit 0
+fi
+
+echo "✓ Runtime directory structure ready:"
+echo "  /etc/osquery -> /var/run/osquery/etc/osquery"
+echo "  /var/log/osquery -> /var/run/osquery/var/log/osquery"
+echo "  /var/osquery -> /var/run/osquery/var/osquery"
+echo ""
+echo "Symlink verification:"
+ls -la /etc/ | grep osquery
+ls -la /var/ | grep osquery
+ls -la /var/log/ | grep osquery
 
 # Create required files in /etc/osquery/
 echo "Creating Uptycs configuration files..."
 
-# 1. Create uptycs.secret file
+# 1. Copy CA certificate to /etc/osquery/ca.crt (required for TLS)
+if [ -f /usr/share/osquery/certs/ca.crt ]; then
+    cp /usr/share/osquery/certs/ca.crt "$OSQUERY_ETC/ca.crt"
+    chmod 644 "$OSQUERY_ETC/ca.crt"
+    echo "✓ Copied CA certificate to $OSQUERY_ETC/ca.crt"
+else
+    echo "WARNING: CA certificate not found at /usr/share/osquery/certs/ca.crt"
+    echo "TLS enrollment may fail"
+fi
+
+# 2. Create uptycs.secret file
 echo "$UPTYCS_SECRET" > "$OSQUERY_ETC/uptycs.secret"
 chmod 600 "$OSQUERY_ETC/uptycs.secret"
 echo "✓ Created $OSQUERY_ETC/uptycs.secret"
@@ -402,12 +456,10 @@ cat > "$OSQUERY_ETC/osquery.flags" <<'EOF'
 --yara_process_limit_mem_used=10485760
 EOF
 
-# Add tags if specified
+# Add tags if specified - create uptycs_tags file
 if [ -n "$UPTYCS_TAGS" ]; then
-    echo "--host_identifier=$UPTYCS_TAGS" >> "$OSQUERY_ETC/osquery.flags"
-    # Also create uptycs_tags file
     echo "$UPTYCS_TAGS" > "$OSQUERY_ETC/uptycs_tags"
-    echo "✓ Created $OSQUERY_ETC/uptycs_tags"
+    echo "✓ Created $OSQUERY_ETC/uptycs_tags with tags: $UPTYCS_TAGS"
 fi
 
 # Add proxy if specified
@@ -416,7 +468,7 @@ if [ -n "$UPTYCS_PROXY" ]; then
 fi
 
 chmod 644 "$OSQUERY_ETC/osquery.flags"
-echo "✓ Created $OSQUERY_ETC/osquery.flags"
+echo "✓ Created $OSQUERY_ETC/osquery.flags with host_identifier=$(hostname)"
 
 # 4. Copy CA certificate if it exists
 if [ -f /usr/share/osquery/certs/certs.pem ]; then
@@ -431,32 +483,31 @@ echo "Verifying /etc/osquery directory contents:"
 ls -la "$OSQUERY_ETC/"
 echo ""
 
-# Ensure runtime directories exist (they're symlinks to /var/run/osquery/*)
-# The actual directories were created during image build
-mkdir -p "$OSQUERY_LOGS"
-mkdir -p "$OSQUERY_DB"
-echo "✓ Runtime directories ready:"
-echo "  - Logs: $OSQUERY_LOGS (-> /var/run/osquery/logs)"
-echo "  - Database: $OSQUERY_DB (-> /var/run/osquery/db)"
-
 echo "Uptycs configuration complete"
 echo "Starting Uptycs OSQuery agent..."
+echo ""
 
-# Launch Uptycs with new command format
-# Using --flagfile and --config_path as specified by EDR team
-UPTYCS_CMD="$UPTYCS_BIN --flagfile $OSQUERY_ETC/osquery.flags --config_path $OSQUERY_ETC/osquery.conf"
+# EDR team requires TWO separate commands:
+# 1. First command: Register tags (runs once and exits)
+# 2. Second command: Launch the agent with full configuration (runs as daemon)
 
-# Add tags via command line if specified
 if [ -n "$UPTYCS_TAGS" ]; then
-    UPTYCS_CMD="$UPTYCS_CMD --osquery_tags \"$UPTYCS_TAGS\""
+    echo "Step 1: Registering tags with Uptycs..."
+    echo "Command: $UPTYCS_BIN --osquery_tags \"$UPTYCS_TAGS\""
+    $UPTYCS_BIN --osquery_tags "$UPTYCS_TAGS"
+    echo "✓ Tags registered"
+    echo ""
 fi
 
-echo "Command: $UPTYCS_CMD"
+# Step 2: Launch the main agent process
+echo "Step 2: Launching Uptycs agent with full configuration..."
+echo "Hostname: $(hostname)"
+echo "Command: $UPTYCS_BIN --flagfile $OSQUERY_ETC/osquery.flags --config_path $OSQUERY_ETC/osquery.conf"
 echo ""
 echo "Logs will be written to: $OSQUERY_LOGS/osqueryd.worker.log"
 echo ""
 
 # Launch Uptycs in foreground (systemd will manage as daemon)
-exec $UPTYCS_CMD
+exec $UPTYCS_BIN --flagfile $OSQUERY_ETC/osquery.flags --config_path $OSQUERY_ETC/osquery.conf
 
 # Made with Bob

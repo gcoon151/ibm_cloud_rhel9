@@ -87,7 +87,7 @@ UPTYCS_RUN_ARGS=""
 if [ -f "$ARTIFACTS_FOLDER/uptycs-binary.tar.gz" ]; then
     echo "Found Uptycs binary, will install into image"
     # Copy Uptycs files to /tmp/ in the VM image (same pattern as other files)
-    UPTYCS_COPY_ARGS="--copy-in $ARTIFACTS_FOLDER/uptycs-binary.tar.gz:/tmp/ "
+    UPTYCS_COPY_ARGS="--copy-in $ARTIFACTS_FOLDER/uptycs-complete.tar.gz:/tmp/ "
     
     if [ -f "$ARTIFACTS_FOLDER/provision-uptycs.sh" ]; then
         UPTYCS_COPY_ARGS="$UPTYCS_COPY_ARGS --copy-in $ARTIFACTS_FOLDER/provision-uptycs.sh:/tmp/ "

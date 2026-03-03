@@ -21,96 +21,122 @@ echo "Files in /tmp:"
 ls -lh /tmp/ | grep -E "(uptycs|provision)" || true
 echo ""
 
-# Check if Uptycs binary tarball exists (copied to /tmp/ by virt-customize)
-if [ ! -f /tmp/uptycs-binary.tar.gz ]; then
-    echo "ERROR: uptycs-binary.tar.gz not found at /tmp/"
+# Check if Uptycs complete tarball exists (copied to /tmp/ by virt-customize)
+if [ ! -f /tmp/uptycs-complete.tar.gz ]; then
+    echo "ERROR: uptycs-complete.tar.gz not found at /tmp/"
     echo "This file should be copied by virt-customize during build"
     echo "Available files in /tmp:"
     ls -la /tmp/
     exit 1
 fi
 
-echo "✓ Found uptycs-binary.tar.gz"
+echo "✓ Found uptycs-complete.tar.gz"
 
-# Extract Uptycs binary to /opt/uptycs
-echo "Extracting Uptycs binary to /opt/uptycs..."
-mkdir -p /opt/uptycs
-tar -xzf /tmp/uptycs-binary.tar.gz -C /opt/uptycs
+# Extract to temporary location first
+echo "Extracting Uptycs complete package..."
+TEMP_EXTRACT="/tmp/uptycs-extracted"
+mkdir -p "$TEMP_EXTRACT"
+tar -xzf /tmp/uptycs-complete.tar.gz -C "$TEMP_EXTRACT" --exclude='._*'
 echo "✓ Extraction complete"
 echo ""
 
-# Verify binary exists and is executable
-echo "Verifying osqueryd binary..."
-if [ ! -f /opt/uptycs/bin/osqueryd ]; then
-    echo "ERROR: osqueryd binary not found after extraction"
-    echo "Contents of /opt/uptycs:"
-    find /opt/uptycs -type f
-    exit 1
-fi
+# Debug: Show what was extracted
+echo "Contents of extracted package:"
+find "$TEMP_EXTRACT" -type f | sort
+echo ""
 
-chmod +x /opt/uptycs/bin/osqueryd
+# Install binaries to /usr/bin/ (where Uptycs expects them)
+echo "Installing Uptycs binaries to /usr/bin/..."
+REQUIRED_BINARIES=(
+    "osqueryd"
+    "uptycs-protect"
+    "uptycs-nft"
+    "bpf_progs.o"
+    "uptycs_audit_conf.sh"
+)
 
-# Fix ownership and permissions (osqueryd requires root:root with no group/other write)
-echo "Setting secure ownership and permissions..."
-chown root:root /opt/uptycs/bin/osqueryd
-chmod 755 /opt/uptycs/bin/osqueryd
-chmod go-w /opt/uptycs/bin/osqueryd
-echo "✓ Binary is executable with secure permissions"
+for binary in "${REQUIRED_BINARIES[@]}"; do
+    if [ ! -f "$TEMP_EXTRACT/bin/$binary" ]; then
+        echo "ERROR: $binary not found in extracted package"
+        exit 1
+    fi
+    
+    # Copy to /usr/bin/
+    cp "$TEMP_EXTRACT/bin/$binary" "/usr/bin/$binary"
+    
+    # Set permissions
+    if [[ "$binary" == *.o ]]; then
+        # bpf_progs.o is a data file
+        chmod 644 "/usr/bin/$binary"
+    else
+        # Executables
+        chmod 755 "/usr/bin/$binary"
+    fi
+    
+    chown root:root "/usr/bin/$binary"
+    echo "  ✓ Installed $binary to /usr/bin/"
+done
+echo ""
 
-# Verify it's a valid ELF binary
-echo "Binary info:"
-file /opt/uptycs/bin/osqueryd
-ls -lh /opt/uptycs/bin/osqueryd
+# Verify binaries
+echo "Verifying installed binaries:"
+file /usr/bin/osqueryd
+file /usr/bin/uptycs-protect
+file /usr/bin/uptycs-nft
+ls -lh /usr/bin/osqueryd /usr/bin/uptycs-protect /usr/bin/uptycs-nft /usr/bin/bpf_progs.o /usr/bin/uptycs_audit_conf.sh
 echo ""
 
 # Install CA certificate for TLS verification
 echo "Installing CA certificate..."
-if [ -f /opt/uptycs/etc/ca.crt ]; then
+if [ -f "$TEMP_EXTRACT/etc/osquery/cert/ca.crt" ]; then
+    # Create a temporary location for the cert (will be copied to /etc/osquery at runtime)
     mkdir -p /usr/share/osquery/certs
-    cp /opt/uptycs/etc/ca.crt /usr/share/osquery/certs/certs.pem
-    chmod 644 /usr/share/osquery/certs/certs.pem
-    echo "✓ CA certificate installed to /usr/share/osquery/certs/certs.pem"
+    cp "$TEMP_EXTRACT/etc/osquery/cert/ca.crt" /usr/share/osquery/certs/ca.crt
+    chmod 644 /usr/share/osquery/certs/ca.crt
+    echo "✓ CA certificate installed to /usr/share/osquery/certs/ca.crt"
+    echo "  (will be copied to /etc/osquery/ca.crt at runtime)"
 else
-    echo "WARNING: CA certificate not found at /opt/uptycs/etc/ca.crt"
+    echo "WARNING: CA certificate not found in extracted package"
     echo "TLS enrollment may fail without proper certificates"
 fi
 echo ""
 
+# Clean up temporary extraction
+rm -rf "$TEMP_EXTRACT"
+
 # Create symlinks for /etc/osquery, /var/log/osquery, and /var/osquery to tmpfs locations
 # This must happen BEFORE dm-verity signing
+# Structure mirrors the original Uptycs installation paths under /var/run/osquery/
 echo "Creating symlinks for dm-verity compatibility..."
 
-# Create tmpfs target directories in /var/run (which is typically tmpfs)
-# Note: /run and /var/run are usually the same (symlinked) on modern Linux
-mkdir -p /var/run/osquery/etc
-mkdir -p /var/run/osquery/logs
-mkdir -p /var/run/osquery/db
+# Note: The actual directories will be created at runtime by provision-uptycs.sh
+# We only create the symlinks here during image build
 
-# Create /etc/osquery as symlink to /var/run/osquery/etc
+# Create /etc/osquery as symlink to /var/run/osquery/etc/osquery/
 if [ -d /etc/osquery ]; then
     echo "WARNING: /etc/osquery already exists, removing..."
     rm -rf /etc/osquery
 fi
-ln -s /var/run/osquery/etc /etc/osquery
-echo "✓ Created symlink: /etc/osquery -> /var/run/osquery/etc"
+ln -s /var/run/osquery/etc/osquery /etc/osquery
+echo "✓ Created symlink: /etc/osquery -> /var/run/osquery/etc/osquery"
 
-# Create /var/log/osquery as symlink to /var/run/osquery/logs
+# Create /var/log/osquery as symlink to /var/run/osquery/var/log/osquery/
 mkdir -p /var/log
 if [ -d /var/log/osquery ]; then
     echo "WARNING: /var/log/osquery already exists, removing..."
     rm -rf /var/log/osquery
 fi
-ln -s /var/run/osquery/logs /var/log/osquery
-echo "✓ Created symlink: /var/log/osquery -> /var/run/osquery/logs"
+ln -s /var/run/osquery/var/log/osquery /var/log/osquery
+echo "✓ Created symlink: /var/log/osquery -> /var/run/osquery/var/log/osquery"
 
-# Create /var/osquery as symlink to /var/run/osquery/db (for database)
+# Create /var/osquery as symlink to /var/run/osquery/var/osquery/ (for database)
 mkdir -p /var
 if [ -d /var/osquery ]; then
     echo "WARNING: /var/osquery already exists, removing..."
     rm -rf /var/osquery
 fi
-ln -s /var/run/osquery/db /var/osquery
-echo "✓ Created symlink: /var/osquery -> /var/run/osquery/db"
+ln -s /var/run/osquery/var/osquery /var/osquery
+echo "✓ Created symlink: /var/osquery -> /var/run/osquery/var/osquery"
 
 # Verify symlinks
 echo "Verifying symlinks:"
@@ -149,9 +175,47 @@ else
 fi
 echo ""
 
+# Set system-wide ulimit for file descriptors
+echo "Configuring system ulimits..."
+cat >> /etc/security/limits.conf << 'EOF'
+# Uptycs EDR requires high file descriptor limits
+* soft nofile 1048576
+* hard nofile 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+EOF
+
+# Also set in systemd system.conf for services
+mkdir -p /etc/systemd/system.conf.d
+cat > /etc/systemd/system.conf.d/uptycs-limits.conf << 'EOF'
+[Manager]
+DefaultLimitNOFILE=1048576
+EOF
+
+echo "✓ System ulimits configured (nofile=1048576)"
+echo ""
+
 echo "=========================================="
 echo "=== Uptycs Installation Complete ==="
 echo "=========================================="
+echo ""
+echo "Installed components:"
+echo "  - Binaries in /usr/bin/:"
+echo "    • osqueryd"
+echo "    • uptycs-protect"
+echo "    • uptycs-nft"
+echo "    • bpf_progs.o"
+echo "    • uptycs_audit_conf.sh"
+echo "  - Certificate: /etc/osquery/cert/ca.crt"
+echo "  - Provisioning script: /usr/local/bin/provision-uptycs.sh"
+echo "  - Systemd service: /etc/systemd/system/uptycs-osquery.service (enabled)"
+echo ""
+echo "At runtime, the service will:"
+echo "  1. Check for /var/run/peerpod/initdata"
+echo "  2. Extract Uptycs configuration from initdata"
+echo "  3. Start osqueryd with the extracted config"
+echo ""
+echo "Full installation log saved to: $LOGFILE"
 echo ""
 echo "Installed components:"
 echo "  - Binary: /opt/uptycs/bin/osqueryd"
