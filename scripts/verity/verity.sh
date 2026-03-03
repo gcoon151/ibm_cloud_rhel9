@@ -279,7 +279,7 @@ if [ "$APPLY_VERITY" = "true" ]; then
     echo ""
     apply_dmverity
 
-    # Step 4. Add roothash to GRUB configuration (GRUB is used, not systemd-boot)
+    # Step 4. Add roothash to GRUB configuration (GRUB is used, not systemd-boot/UKI)
     echo ""
     echo "Adding roothash to GRUB configuration..."
     
@@ -296,18 +296,6 @@ if [ "$APPLY_VERITY" = "true" ]; then
     echo "GRUB_CMDLINE_LINUX line:"
     grep "GRUB_CMDLINE_LINUX=" mnt/etc/default/grub
     
-    # Also update BOOTX64.CSV for consistency (though GRUB overrides it)
-    umount mnt
-    mount /dev/$EFI_PN mnt
-    esp_mounted=1
-    BOOTX_FILE=mnt/EFI/redhat/BOOTX64.CSV
-    cat $BOOTX_FILE | iconv -f UCS-2 | tee tmp-bootx > /dev/null
-    sed -i "s/\( *\),UKI/ roothash=$RH systemd.volatile=overlay\1,UKI/" tmp-bootx
-    mv $BOOTX_FILE $BOOTX_FILE.orig
-    cat tmp-bootx | iconv -t UCS-2 | tee $BOOTX_FILE > /dev/null
-    echo "Also updated BOOTX64.CSV for consistency"
-    rm -rf tmp-bootx
-    esp_mounted=0
     umount mnt
 fi
 
