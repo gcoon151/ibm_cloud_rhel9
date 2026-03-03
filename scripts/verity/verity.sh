@@ -279,19 +279,33 @@ if [ "$APPLY_VERITY" = "true" ]; then
     echo ""
     apply_dmverity
 
-    # Step 4. Add roothash to BOOTX64.CSV (systemd-boot not available, UKI addons won't work)
+    # Step 4. Add roothash to GRUB configuration (GRUB is used, not systemd-boot)
     echo ""
-    echo "Adding roothash to BOOTX64.CSV..."
+    echo "Adding roothash to GRUB configuration..."
+    
+    # Mount root partition to modify /etc/default/grub
+    mount /dev/$ROOT_PN mnt
+    
+    # Backup original grub config
+    cp mnt/etc/default/grub mnt/etc/default/grub.orig
+    
+    # Add roothash and systemd.volatile=overlay to GRUB_CMDLINE_LINUX
+    sed -i "s/GRUB_CMDLINE_LINUX=\"\(.*\)\"/GRUB_CMDLINE_LINUX=\"\1 roothash=$RH systemd.volatile=overlay\"/" mnt/etc/default/grub
+    
+    echo "Updated /etc/default/grub with roothash=$RH"
+    echo "GRUB_CMDLINE_LINUX line:"
+    grep "GRUB_CMDLINE_LINUX=" mnt/etc/default/grub
+    
+    # Also update BOOTX64.CSV for consistency (though GRUB overrides it)
+    umount mnt
     mount /dev/$EFI_PN mnt
     esp_mounted=1
     BOOTX_FILE=mnt/EFI/redhat/BOOTX64.CSV
     cat $BOOTX_FILE | iconv -f UCS-2 | tee tmp-bootx > /dev/null
-    # Add roothash and systemd.volatile=overlay to kernel cmdline
     sed -i "s/\( *\),UKI/ roothash=$RH systemd.volatile=overlay\1,UKI/" tmp-bootx
     mv $BOOTX_FILE $BOOTX_FILE.orig
     cat tmp-bootx | iconv -t UCS-2 | tee $BOOTX_FILE > /dev/null
-    echo "Updated BOOTX64.CSV with roothash=$RH"
-    cat $BOOTX_FILE | iconv -f UCS-2
+    echo "Also updated BOOTX64.CSV for consistency"
     rm -rf tmp-bootx
     esp_mounted=0
     umount mnt
