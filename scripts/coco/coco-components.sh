@@ -80,11 +80,53 @@ ls $ARTIFACTS_FOLDER
 echo ""
 EXTRA_ARGS=""
 [[ -n "$ROOT_PASSWORD" ]] && EXTRA_ARGS=" --root-password password:${ROOT_PASSWORD} "
+
+# Check if Uptycs files exist before adding them to virt-customize
+UPTYCS_COPY_ARGS=""
+UPTYCS_RUN_ARGS=""
+if [ -f "$ARTIFACTS_FOLDER/uptycs-binary.tar.gz" ]; then
+    echo "Found Uptycs binary, will install into image"
+    # Copy Uptycs files to /tmp/ in the VM image (same pattern as other files)
+    UPTYCS_COPY_ARGS="--copy-in $ARTIFACTS_FOLDER/uptycs-complete.tar.gz:/tmp/ "
+    
+    if [ -f "$ARTIFACTS_FOLDER/provision-uptycs.sh" ]; then
+        UPTYCS_COPY_ARGS="$UPTYCS_COPY_ARGS --copy-in $ARTIFACTS_FOLDER/provision-uptycs.sh:/tmp/ "
+    fi
+    
+    if [ -f "$ARTIFACTS_FOLDER/uptycs-osquery.service" ]; then
+        UPTYCS_COPY_ARGS="$UPTYCS_COPY_ARGS --copy-in $ARTIFACTS_FOLDER/uptycs-osquery.service:/tmp/ "
+    fi
+    
+    # Run install script after podvm_maker.sh
+    UPTYCS_RUN_ARGS="--run $ARTIFACTS_FOLDER/install-uptycs.sh "
+else
+    echo "Uptycs binary not found, skipping Uptycs installation"
+fi
+
+# Add kata-agent metrics configuration if it exists
+METRICS_COPY_ARGS=""
+METRICS_RUN_ARGS=""
+METRICS_CONF="$ARTIFACTS_FOLDER/../konflux/podvm-root/etc/systemd/system/kata-agent.service.d/20-enable-metrics.conf"
+if [ -f "$METRICS_CONF" ]; then
+    echo "Found kata-agent metrics configuration, will install into image"
+    # Copy metrics config to /tmp/ in the VM image (same pattern as Uptycs)
+    METRICS_COPY_ARGS="--copy-in $METRICS_CONF:/tmp/ "
+    
+    # Run install script after Uptycs
+    METRICS_RUN_ARGS="--run $ARTIFACTS_FOLDER/install-metrics-config.sh "
+else
+    echo "Warning: kata-agent metrics configuration not found at $METRICS_CONF"
+fi
+
 virt-customize \
     --copy-in $ARTIFACTS_FOLDER/podvm-binaries.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/pause-bundle.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/luks-config.tar.gz:/tmp/ \
+    ${UPTYCS_COPY_ARGS} \
+    ${METRICS_COPY_ARGS} \
     --run $ARTIFACTS_FOLDER/podvm_maker.sh \
+    ${UPTYCS_RUN_ARGS} \
+    ${METRICS_RUN_ARGS} \
     --uninstall WALinuxAgent \
     ${EXTRA_ARGS} \
     -a $INPUT_IMAGE
