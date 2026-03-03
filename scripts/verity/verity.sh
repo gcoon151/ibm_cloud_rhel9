@@ -279,9 +279,22 @@ if [ "$APPLY_VERITY" = "true" ]; then
     echo ""
     apply_dmverity
 
-    # Step 4. Prepare and install the addon
+    # Step 4. Add roothash to BOOTX64.CSV (systemd-boot not available, UKI addons won't work)
     echo ""
-    create_uki_addon
+    echo "Adding roothash to BOOTX64.CSV..."
+    mount /dev/$EFI_PN mnt
+    esp_mounted=1
+    BOOTX_FILE=mnt/EFI/redhat/BOOTX64.CSV
+    cat $BOOTX_FILE | iconv -f UCS-2 | tee tmp-bootx > /dev/null
+    # Add roothash and systemd.volatile=overlay to kernel cmdline
+    sed -i "s/\( *\),UKI/ roothash=$RH systemd.volatile=overlay\1,UKI/" tmp-bootx
+    mv $BOOTX_FILE $BOOTX_FILE.orig
+    cat tmp-bootx | iconv -t UCS-2 | tee $BOOTX_FILE > /dev/null
+    echo "Updated BOOTX64.CSV with roothash=$RH"
+    cat $BOOTX_FILE | iconv -f UCS-2
+    rm -rf tmp-bootx
+    esp_mounted=0
+    umount mnt
 fi
 
 
