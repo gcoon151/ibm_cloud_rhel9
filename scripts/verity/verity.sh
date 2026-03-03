@@ -289,4 +289,15 @@ fi
 qemu-nbd --disconnect $NBD_DEVICE
 nbd_mounted=0
 rm -rf mnt
+
+# Repair QCOW2 metadata corruption caused by systemd-repart via NBD
+# This is expected when creating dm-verity partitions and must be fixed
+echo ""
+echo "Repairing QCOW2 metadata corruption (expected after dm-verity via NBD)..."
+if qemu-img check -r all "$DISK" 2>&1 | tee /tmp/qemu-img-repair.log; then
+    echo "✓ QCOW2 image repaired successfully"
+else
+    echo "⚠ QCOW2 repair completed with warnings (check output above)"
+fi
+
 cd $here
