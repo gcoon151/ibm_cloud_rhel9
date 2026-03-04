@@ -332,24 +332,53 @@ if [ "$APPLY_VERITY" = "true" ]; then
     cat tmp-bootx | iconv -t UCS-2 > "$BOOTX_FILE"
     
     echo "✓ Updated BOOTX64.CSV:"
-    cat "$BOOTX_FILE" | iconv -f UCS-2
+    BOOTX_CONTENT=$(cat "$BOOTX_FILE" | iconv -f UCS-2)
+    echo "$BOOTX_CONTENT"
     
-    # Validate roothash was added
-    if ! cat "$BOOTX_FILE" | iconv -f UCS-2 | grep -q "roothash=$RH"; then
-        echo ""
-        echo "✗✗✗ ERROR: Failed to add roothash to BOOTX64.CSV"
+    # Comprehensive validation of BOOTX64.CSV
+    echo ""
+    echo "=========================================="
+    echo "  Validating BOOTX64.CSV Modification"
+    echo "=========================================="
+    
+    # 1. Validate roothash was added
+    if ! echo "$BOOTX_CONTENT" | grep -q "roothash=$RH"; then
+        echo "✗✗✗ ERROR: roothash NOT found in BOOTX64.CSV"
+        echo "Expected: roothash=$RH"
         umount mnt
         exit 1
     fi
-    echo ""
-    echo "✓✓✓ SUCCESS: roothash added to BOOTX64.CSV"
+    echo "✓ roothash parameter present"
     
-    # Validate systemd.volatile=overlay
-    if cat "$BOOTX_FILE" | iconv -f UCS-2 | grep -q "systemd.volatile=overlay"; then
-        echo "✓✓✓ SUCCESS: systemd.volatile=overlay added to BOOTX64.CSV"
-    else
-        echo "✗✗✗ WARNING: systemd.volatile=overlay NOT found in BOOTX64.CSV"
+    # 2. Validate systemd.volatile=overlay
+    if ! echo "$BOOTX_CONTENT" | grep -q "systemd.volatile=overlay"; then
+        echo "✗✗✗ ERROR: systemd.volatile=overlay NOT found in BOOTX64.CSV"
+        umount mnt
+        exit 1
     fi
+    echo "✓ systemd.volatile=overlay parameter present"
+    
+    # 3. Validate "UKI bootentry" field is preserved
+    if ! echo "$BOOTX_CONTENT" | grep -q "UKI bootentry"; then
+        echo "✗✗✗ ERROR: 'UKI bootentry' field MISSING or CORRUPTED"
+        echo "Current content: $BOOTX_CONTENT"
+        echo "This will prevent the boot loader from recognizing the entry!"
+        umount mnt
+        exit 1
+    fi
+    echo "✓ 'UKI bootentry' field preserved"
+    
+    # 4. Validate complete format
+    if ! echo "$BOOTX_CONTENT" | grep -q "\.efi roothash=$RH systemd.volatile=overlay  *,UKI bootentry"; then
+        echo "✗✗✗ WARNING: Format may not be exactly correct"
+        echo "Expected pattern: .efi roothash=... systemd.volatile=overlay ,UKI bootentry"
+        echo "Actual: $BOOTX_CONTENT"
+    else
+        echo "✓ Complete format validated"
+    fi
+    
+    echo ""
+    echo "✓✓✓ SUCCESS: BOOTX64.CSV correctly modified"
     
     rm -rf tmp-bootx
     
