@@ -279,134 +279,78 @@ if [ "$APPLY_VERITY" = "true" ]; then
     echo ""
     apply_dmverity
 
-    # Step 4. Add roothash to GRUB configuration (GRUB is used, not systemd-boot/UKI)
+    # Step 4. Add roothash to UKI boot configuration via BOOTX64.CSV
     echo ""
     echo "=========================================="
-    echo "  Configuring GRUB for dm-verity"
+    echo "  Configuring UKI Boot for dm-verity"
     echo "=========================================="
+    echo "This is a UKI-only image (GRUB removed by kickstart)"
+    echo "Modifying BOOTX64.CSV to add roothash parameter"
     
-    # Mount root partition to modify /etc/default/grub and regenerate grub.cfg
-    mount /dev/$ROOT_PN mnt
+    # Mount EFI partition
+    mount /dev/$EFI_PN mnt
+    esp_mounted=1
     
-    # Validate GRUB installation
+    BOOTX_FILE=mnt/EFI/redhat/BOOTX64.CSV
+    
+    # Validate BOOTX64.CSV exists
     echo ""
-    echo "[1/5] Validating GRUB installation..."
-    if [ ! -f mnt/boot/grub2/grub.cfg ]; then
-        echo "ERROR: /boot/grub2/grub.cfg not found - GRUB may not be installed"
+    echo "[1/3] Validating UKI boot configuration..."
+    if [ ! -f "$BOOTX_FILE" ]; then
+        echo "ERROR: $BOOTX_FILE not found - UKI boot not configured"
         umount mnt
         exit 1
     fi
-    if [ ! -f mnt/etc/default/grub ]; then
-        echo "ERROR: /etc/default/grub not found"
-        umount mnt
-        exit 1
-    fi
-    echo "✓ GRUB installation validated"
+    echo "✓ BOOTX64.CSV found"
     
-    # Backup original grub config
+    # Backup and show original
     echo ""
-    echo "[2/5] Backing up original configuration..."
-    cp mnt/etc/default/grub mnt/etc/default/grub.orig
-    cp mnt/boot/grub2/grub.cfg mnt/boot/grub2/grub.cfg.orig
-    echo "✓ Backups created:"
-    echo "  - /etc/default/grub.orig"
-    echo "  - /boot/grub2/grub.cfg.orig"
+    echo "[2/3] Original BOOTX64.CSV:"
+    cp "$BOOTX_FILE" "$BOOTX_FILE.orig"
+    cat "$BOOTX_FILE" | iconv -f UCS-2
     
-    # Show original GRUB_CMDLINE_LINUX
+    # Add roothash to kernel cmdline in BOOTX64.CSV
     echo ""
-    echo "[3/5] Original GRUB_CMDLINE_LINUX:"
-    grep "GRUB_CMDLINE_LINUX=" mnt/etc/default/grub
+    echo "[3/3] Adding dm-verity parameters to BOOTX64.CSV..."
+    cat "$BOOTX_FILE" | iconv -f UCS-2 | tee tmp-bootx > /dev/null
     
-    # Add roothash and systemd.volatile=overlay to GRUB_CMDLINE_LINUX
-    echo ""
-    echo "[4/5] Adding dm-verity parameters..."
-    sed -i "s/GRUB_CMDLINE_LINUX=\"\(.*\)\"/GRUB_CMDLINE_LINUX=\"\1 roothash=$RH systemd.volatile=overlay\"/" mnt/etc/default/grub
+    # Modify the UKI boot entry to include roothash and systemd.volatile=overlay
+    # Format: shimx64.efi,redhat,\EFI\Linux\<uki>.efi ,UKI bootentry
+    # Becomes: shimx64.efi,redhat,\EFI\Linux\<uki>.efi roothash=$RH systemd.volatile=overlay ,UKI bootentry
+    sed -i "s/\.efi  *,UKI/.efi roothash=$RH systemd.volatile=overlay ,UKI/" tmp-bootx
     
-    # Verify the modification
-    echo "✓ Updated GRUB_CMDLINE_LINUX:"
-    grep "GRUB_CMDLINE_LINUX=" mnt/etc/default/grub
+    # Convert back to UCS-2 and save
+    cat tmp-bootx | iconv -t UCS-2 | tee "$BOOTX_FILE" > /dev/null
+    
+    echo "✓ Updated BOOTX64.CSV:"
+    cat "$BOOTX_FILE" | iconv -f UCS-2
     
     # Validate roothash was added
-    if ! grep -q "roothash=$RH" mnt/etc/default/grub; then
-        echo "ERROR: Failed to add roothash to /etc/default/grub"
+    if ! cat "$BOOTX_FILE" | iconv -f UCS-2 | grep -q "roothash=$RH"; then
+        echo ""
+        echo "✗✗✗ ERROR: Failed to add roothash to BOOTX64.CSV"
         umount mnt
         exit 1
     fi
-    echo "✓ Roothash parameter validated in /etc/default/grub"
-    
-    umount mnt
-    
-    # Disconnect NBD before using virt-customize (they conflict)
     echo ""
-    echo "Disconnecting NBD device before GRUB regeneration..."
-    qemu-nbd --disconnect $NBD_DEVICE
-    nbd_mounted=0
-    
-    # Wait for NBD to fully release
-    echo "Waiting for NBD device to release image..."
-    sleep 3
-    
-    # Regenerate GRUB configuration to apply changes
-    echo ""
-    echo "[5/5] Regenerating GRUB configuration..."
-    
-    # Check if grub2-mkconfig exists, install if needed
-    echo "Checking for grub2-tools package..."
-    if ! virt-customize -a $DISK --run-command "command -v grub2-mkconfig" >/dev/null 2>&1; then
-        echo "Installing grub2-tools package..."
-        if ! virt-customize -a $DISK --install grub2-tools 2>&1 | tee /tmp/grub-install.log; then
-            echo "ERROR: Failed to install grub2-tools"
-            cat /tmp/grub-install.log
-            exit 1
-        fi
-        echo "✓ grub2-tools installed"
-    else
-        echo "✓ grub2-mkconfig already available"
-    fi
-    
-    echo ""
-    echo "Running: grub2-mkconfig -o /boot/grub2/grub.cfg"
-    if ! virt-customize -a $DISK --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg" 2>&1 | tee /tmp/grub-mkconfig.log; then
-        echo "ERROR: grub2-mkconfig failed"
-        cat /tmp/grub-mkconfig.log
-        exit 1
-    fi
-    echo "✓ GRUB configuration regenerated"
-    
-    # Verify kernelopts in generated grub.cfg
-    echo ""
-    echo "=========================================="
-    echo "  Validation: Checking grub.cfg"
-    echo "=========================================="
-    
-    KERNELOPTS=$(virt-cat -a $DISK /boot/grub2/grub.cfg | grep "set kernelopts=" | head -1)
-    echo "kernelopts line from /boot/grub2/grub.cfg:"
-    echo "$KERNELOPTS"
-    
-    # Validate roothash is in kernelopts
-    if echo "$KERNELOPTS" | grep -q "roothash=$RH"; then
-        echo ""
-        echo "✓✓✓ SUCCESS: roothash found in kernelopts"
-    else
-        echo ""
-        echo "✗✗✗ ERROR: roothash NOT found in kernelopts"
-        echo "Expected roothash: $RH"
-        echo "This means GRUB will NOT pass dm-verity parameters to kernel!"
-        exit 1
-    fi
+    echo "✓✓✓ SUCCESS: roothash added to BOOTX64.CSV"
     
     # Validate systemd.volatile=overlay
-    if echo "$KERNELOPTS" | grep -q "systemd.volatile=overlay"; then
-        echo "✓✓✓ SUCCESS: systemd.volatile=overlay found in kernelopts"
+    if cat "$BOOTX_FILE" | iconv -f UCS-2 | grep -q "systemd.volatile=overlay"; then
+        echo "✓✓✓ SUCCESS: systemd.volatile=overlay added to BOOTX64.CSV"
     else
-        echo "✗✗✗ WARNING: systemd.volatile=overlay NOT found in kernelopts"
+        echo "✗✗✗ WARNING: systemd.volatile=overlay NOT found in BOOTX64.CSV"
     fi
+    
+    rm -rf tmp-bootx
+    esp_mounted=0
+    umount mnt
     
     echo ""
     echo "=========================================="
-    echo "  GRUB Configuration Complete"
+    echo "  UKI Boot Configuration Complete"
     echo "=========================================="
-    echo "dm-verity parameters successfully added to GRUB"
+    echo "dm-verity parameters successfully added to BOOTX64.CSV"
     echo "Boot will use: roothash=$RH systemd.volatile=overlay"
     echo ""
 fi
