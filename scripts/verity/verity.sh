@@ -349,8 +349,23 @@ if [ "$APPLY_VERITY" = "true" ]; then
     # Regenerate GRUB configuration to apply changes
     echo ""
     echo "[5/5] Regenerating GRUB configuration..."
-    echo "Running: grub2-mkconfig -o /boot/grub2/grub.cfg"
     
+    # Check if grub2-mkconfig exists, install if needed
+    echo "Checking for grub2-tools package..."
+    if ! virt-customize -a $DISK --run-command "command -v grub2-mkconfig" >/dev/null 2>&1; then
+        echo "Installing grub2-tools package..."
+        if ! virt-customize -a $DISK --install grub2-tools 2>&1 | tee /tmp/grub-install.log; then
+            echo "ERROR: Failed to install grub2-tools"
+            cat /tmp/grub-install.log
+            exit 1
+        fi
+        echo "✓ grub2-tools installed"
+    else
+        echo "✓ grub2-mkconfig already available"
+    fi
+    
+    echo ""
+    echo "Running: grub2-mkconfig -o /boot/grub2/grub.cfg"
     if ! virt-customize -a $DISK --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg" 2>&1 | tee /tmp/grub-mkconfig.log; then
         echo "ERROR: grub2-mkconfig failed"
         cat /tmp/grub-mkconfig.log
