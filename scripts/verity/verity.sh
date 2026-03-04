@@ -283,7 +283,7 @@ if [ "$APPLY_VERITY" = "true" ]; then
     echo ""
     echo "Adding roothash to GRUB configuration..."
     
-    # Mount root partition to modify /etc/default/grub
+    # Mount root partition to modify /etc/default/grub and regenerate grub.cfg
     mount /dev/$ROOT_PN mnt
     
     # Backup original grub config
@@ -295,6 +295,14 @@ if [ "$APPLY_VERITY" = "true" ]; then
     echo "Updated /etc/default/grub with roothash=$RH"
     echo "GRUB_CMDLINE_LINUX line:"
     grep "GRUB_CMDLINE_LINUX=" mnt/etc/default/grub
+    
+    # Regenerate GRUB configuration to apply changes
+    echo ""
+    echo "Regenerating GRUB configuration..."
+    virt-customize -a $DISK --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg"
+    
+    echo "Verifying kernelopts in generated grub.cfg..."
+    virt-cat -a $DISK /boot/grub2/grub.cfg | grep "set kernelopts=" | head -1
     
     umount mnt
 fi
