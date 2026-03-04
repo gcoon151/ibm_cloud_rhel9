@@ -281,30 +281,109 @@ if [ "$APPLY_VERITY" = "true" ]; then
 
     # Step 4. Add roothash to GRUB configuration (GRUB is used, not systemd-boot/UKI)
     echo ""
-    echo "Adding roothash to GRUB configuration..."
+    echo "=========================================="
+    echo "  Configuring GRUB for dm-verity"
+    echo "=========================================="
     
     # Mount root partition to modify /etc/default/grub and regenerate grub.cfg
     mount /dev/$ROOT_PN mnt
     
+    # Validate GRUB installation
+    echo ""
+    echo "[1/5] Validating GRUB installation..."
+    if [ ! -f mnt/boot/grub2/grub.cfg ]; then
+        echo "ERROR: /boot/grub2/grub.cfg not found - GRUB may not be installed"
+        umount mnt
+        exit 1
+    fi
+    if [ ! -f mnt/etc/default/grub ]; then
+        echo "ERROR: /etc/default/grub not found"
+        umount mnt
+        exit 1
+    fi
+    echo "✓ GRUB installation validated"
+    
     # Backup original grub config
+    echo ""
+    echo "[2/5] Backing up original configuration..."
     cp mnt/etc/default/grub mnt/etc/default/grub.orig
+    cp mnt/boot/grub2/grub.cfg mnt/boot/grub2/grub.cfg.orig
+    echo "✓ Backups created:"
+    echo "  - /etc/default/grub.orig"
+    echo "  - /boot/grub2/grub.cfg.orig"
+    
+    # Show original GRUB_CMDLINE_LINUX
+    echo ""
+    echo "[3/5] Original GRUB_CMDLINE_LINUX:"
+    grep "GRUB_CMDLINE_LINUX=" mnt/etc/default/grub
     
     # Add roothash and systemd.volatile=overlay to GRUB_CMDLINE_LINUX
+    echo ""
+    echo "[4/5] Adding dm-verity parameters..."
     sed -i "s/GRUB_CMDLINE_LINUX=\"\(.*\)\"/GRUB_CMDLINE_LINUX=\"\1 roothash=$RH systemd.volatile=overlay\"/" mnt/etc/default/grub
     
-    echo "Updated /etc/default/grub with roothash=$RH"
-    echo "GRUB_CMDLINE_LINUX line:"
+    # Verify the modification
+    echo "✓ Updated GRUB_CMDLINE_LINUX:"
     grep "GRUB_CMDLINE_LINUX=" mnt/etc/default/grub
+    
+    # Validate roothash was added
+    if ! grep -q "roothash=$RH" mnt/etc/default/grub; then
+        echo "ERROR: Failed to add roothash to /etc/default/grub"
+        umount mnt
+        exit 1
+    fi
+    echo "✓ Roothash parameter validated in /etc/default/grub"
+    
+    umount mnt
     
     # Regenerate GRUB configuration to apply changes
     echo ""
-    echo "Regenerating GRUB configuration..."
-    virt-customize -a $DISK --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg"
+    echo "[5/5] Regenerating GRUB configuration..."
+    echo "Running: grub2-mkconfig -o /boot/grub2/grub.cfg"
     
-    echo "Verifying kernelopts in generated grub.cfg..."
-    virt-cat -a $DISK /boot/grub2/grub.cfg | grep "set kernelopts=" | head -1
+    if ! virt-customize -a $DISK --run-command "grub2-mkconfig -o /boot/grub2/grub.cfg" 2>&1 | tee /tmp/grub-mkconfig.log; then
+        echo "ERROR: grub2-mkconfig failed"
+        cat /tmp/grub-mkconfig.log
+        exit 1
+    fi
+    echo "✓ GRUB configuration regenerated"
     
-    umount mnt
+    # Verify kernelopts in generated grub.cfg
+    echo ""
+    echo "=========================================="
+    echo "  Validation: Checking grub.cfg"
+    echo "=========================================="
+    
+    KERNELOPTS=$(virt-cat -a $DISK /boot/grub2/grub.cfg | grep "set kernelopts=" | head -1)
+    echo "kernelopts line from /boot/grub2/grub.cfg:"
+    echo "$KERNELOPTS"
+    
+    # Validate roothash is in kernelopts
+    if echo "$KERNELOPTS" | grep -q "roothash=$RH"; then
+        echo ""
+        echo "✓✓✓ SUCCESS: roothash found in kernelopts"
+    else
+        echo ""
+        echo "✗✗✗ ERROR: roothash NOT found in kernelopts"
+        echo "Expected roothash: $RH"
+        echo "This means GRUB will NOT pass dm-verity parameters to kernel!"
+        exit 1
+    fi
+    
+    # Validate systemd.volatile=overlay
+    if echo "$KERNELOPTS" | grep -q "systemd.volatile=overlay"; then
+        echo "✓✓✓ SUCCESS: systemd.volatile=overlay found in kernelopts"
+    else
+        echo "✗✗✗ WARNING: systemd.volatile=overlay NOT found in kernelopts"
+    fi
+    
+    echo ""
+    echo "=========================================="
+    echo "  GRUB Configuration Complete"
+    echo "=========================================="
+    echo "dm-verity parameters successfully added to GRUB"
+    echo "Boot will use: roothash=$RH systemd.volatile=overlay"
+    echo ""
 fi
 
 
