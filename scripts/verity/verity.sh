@@ -336,6 +336,16 @@ if [ "$APPLY_VERITY" = "true" ]; then
     
     umount mnt
     
+    # Disconnect NBD before using virt-customize (they conflict)
+    echo ""
+    echo "Disconnecting NBD device before GRUB regeneration..."
+    qemu-nbd --disconnect $NBD_DEVICE
+    nbd_mounted=0
+    
+    # Wait for NBD to fully release
+    echo "Waiting for NBD device to release image..."
+    sleep 3
+    
     # Regenerate GRUB configuration to apply changes
     echo ""
     echo "[5/5] Regenerating GRUB configuration..."
@@ -388,8 +398,11 @@ fi
 
 
 # Cleanup
-qemu-nbd --disconnect $NBD_DEVICE
-nbd_mounted=0
+if [[ $nbd_mounted == 1 ]]; then
+    echo "Disconnecting NBD device..."
+    qemu-nbd --disconnect $NBD_DEVICE
+    nbd_mounted=0
+fi
 rm -rf mnt
 
 # Wait for NBD device to fully release the image file
