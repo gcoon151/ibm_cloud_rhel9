@@ -343,15 +343,79 @@ if [ "$APPLY_VERITY" = "true" ]; then
     fi
     
     rm -rf tmp-bootx
+    
+    # Now inspect the UKI file itself to verify its embedded cmdline
+    echo ""
+    echo "=========================================="
+    echo "  Validating UKI File Configuration"
+    echo "=========================================="
+    
+    # Find the UKI file
+    UKI_FILES=(mnt/EFI/Linux/*.efi)
+    if [ ${#UKI_FILES[@]} -eq 0 ]; then
+        echo "✗✗✗ ERROR: No UKI files found in /EFI/Linux/"
+        umount mnt
+        exit 1
+    fi
+    
+    UKI_FILE="${UKI_FILES[0]}"
+    UKI_NAME=$(basename "$UKI_FILE")
+    echo "Found UKI: $UKI_NAME"
+    
+    # Use ukify to inspect the UKI and extract cmdline
+    echo ""
+    echo "Inspecting UKI with ukify..."
+    if command -v ukify >/dev/null 2>&1; then
+        echo "Running: ukify inspect $UKI_FILE"
+        /usr/lib/systemd/ukify inspect "$UKI_FILE" > /tmp/uki-inspect.txt 2>&1 || true
+        
+        # Extract and display the .cmdline section
+        echo ""
+        echo "UKI .cmdline section:"
+        if grep -A 20 "\.cmdline:" /tmp/uki-inspect.txt | head -25; then
+            UKI_CMDLINE=$(grep -A 20 "\.cmdline:" /tmp/uki-inspect.txt | grep -v "\.cmdline:" | head -1 | xargs)
+            echo ""
+            echo "Extracted cmdline: $UKI_CMDLINE"
+            
+            # Check if UKI has roothash embedded (it shouldn't for our approach)
+            if echo "$UKI_CMDLINE" | grep -q "roothash="; then
+                echo "⚠ WARNING: UKI has embedded roothash (will be overridden by BOOTX64.CSV)"
+            else
+                echo "✓ UKI has no embedded roothash (correct - will use BOOTX64.CSV)"
+            fi
+        else
+            echo "⚠ Could not extract .cmdline section from ukify output"
+        fi
+    else
+        echo "⚠ ukify command not available for inspection"
+    fi
+    
+    # Show what will actually boot
+    echo ""
+    echo "=========================================="
+    echo "  Final Boot Configuration"
+    echo "=========================================="
+    echo "Boot method: UKI via BOOTX64.CSV"
+    echo "UKI file: /EFI/Linux/$UKI_NAME"
+    echo ""
+    echo "BOOTX64.CSV entry:"
+    cat "$BOOTX_FILE" | iconv -f UCS-2
+    echo ""
+    echo "Kernel will receive:"
+    echo "  - UKI embedded cmdline (if any)"
+    echo "  - PLUS parameters from BOOTX64.CSV:"
+    echo "    roothash=$RH"
+    echo "    systemd.volatile=overlay"
+    echo ""
+    
     esp_mounted=0
     umount mnt
     
-    echo ""
     echo "=========================================="
     echo "  UKI Boot Configuration Complete"
     echo "=========================================="
-    echo "dm-verity parameters successfully added to BOOTX64.CSV"
-    echo "Boot will use: roothash=$RH systemd.volatile=overlay"
+    echo "✓ BOOTX64.CSV configured with dm-verity parameters"
+    echo "✓ Ready for upload and deployment"
     echo ""
 fi
 
