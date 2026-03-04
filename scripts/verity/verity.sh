@@ -382,11 +382,12 @@ if [ "$APPLY_VERITY" = "true" ]; then
     
     rm -rf tmp-bootx
     
-    # Now inspect the UKI file itself to verify its embedded cmdline
+    # Now rebuild the UKI with embedded cmdline
     echo ""
     echo "=========================================="
-    echo "  Validating UKI File Configuration"
+    echo "  Rebuilding UKI with Embedded Cmdline"
     echo "=========================================="
+    echo "IBM Cloud boots from wrong EFI entry, so we embed cmdline in UKI itself"
     
     # Find the UKI file
     UKI_FILES=(mnt/EFI/Linux/*.efi)
@@ -399,51 +400,113 @@ if [ "$APPLY_VERITY" = "true" ]; then
     UKI_FILE="${UKI_FILES[0]}"
     UKI_NAME=$(basename "$UKI_FILE")
     echo "Found UKI: $UKI_NAME"
+    echo "Original UKI: $UKI_FILE"
     
-    # Use ukify to inspect the UKI and extract cmdline
+    # Extract current UKI cmdline
     echo ""
-    echo "Inspecting UKI with ukify..."
+    echo "[1/4] Inspecting original UKI..."
     if command -v ukify >/dev/null 2>&1; then
-        echo "Running: ukify inspect $UKI_FILE"
-        /usr/lib/systemd/ukify inspect "$UKI_FILE" > /tmp/uki-inspect.txt 2>&1 || true
-        
-        # Extract and display the .cmdline section
-        echo ""
-        echo "UKI .cmdline section:"
-        if grep -A 20 "\.cmdline:" /tmp/uki-inspect.txt | head -25; then
-            UKI_CMDLINE=$(grep -A 20 "\.cmdline:" /tmp/uki-inspect.txt | grep -v "\.cmdline:" | head -1 | xargs)
-            echo ""
-            echo "Extracted cmdline: $UKI_CMDLINE"
-            
-            # Check if UKI has roothash embedded (it shouldn't for our approach)
-            if echo "$UKI_CMDLINE" | grep -q "roothash="; then
-                echo "⚠ WARNING: UKI has embedded roothash (will be overridden by BOOTX64.CSV)"
-            else
-                echo "✓ UKI has no embedded roothash (correct - will use BOOTX64.CSV)"
-            fi
-        else
-            echo "⚠ Could not extract .cmdline section from ukify output"
-        fi
+        /usr/lib/systemd/ukify inspect "$UKI_FILE" > /tmp/uki-inspect-orig.txt 2>&1 || true
+        ORIG_CMDLINE=$(grep -A 5 "\.cmdline:" /tmp/uki-inspect-orig.txt | grep -v "\.cmdline:" | head -1 | xargs || echo "")
+        echo "Original cmdline: ${ORIG_CMDLINE:-<empty>}"
     else
-        echo "⚠ ukify command not available for inspection"
+        echo "✗✗✗ ERROR: ukify command not available"
+        umount mnt
+        exit 1
     fi
     
-    # Show what will actually boot
+    # Build new cmdline with roothash
+    echo ""
+    echo "[2/4] Building new cmdline..."
+    if [ -n "$ORIG_CMDLINE" ]; then
+        NEW_CMDLINE="$ORIG_CMDLINE roothash=$RH systemd.volatile=overlay"
+    else
+        NEW_CMDLINE="roothash=$RH systemd.volatile=overlay"
+    fi
+    echo "New cmdline: $NEW_CMDLINE"
+    
+    # Backup original UKI
+    echo ""
+    echo "[3/4] Backing up original UKI..."
+    cp "$UKI_FILE" "$UKI_FILE.orig"
+    echo "✓ Backup: $UKI_FILE.orig"
+    
+    # Rebuild UKI with new cmdline
+    echo ""
+    echo "[4/4] Rebuilding UKI with embedded cmdline..."
+    
+    # Extract sections from original UKI
+    /usr/lib/systemd/ukify inspect "$UKI_FILE" --json=short > /tmp/uki-sections.json 2>&1 || true
+    
+    # Use ukify to rebuild with new cmdline
+    # We need to extract the kernel, initrd, etc. and rebuild
+    # For now, use a simpler approach: use objcopy to replace the .cmdline section
+    
+    # Create new cmdline file
+    echo -n "$NEW_CMDLINE" > /tmp/new-cmdline.txt
+    
+    # Use objcopy to update the .cmdline section in the UKI
+    if command -v objcopy >/dev/null 2>&1; then
+        echo "Using objcopy to update .cmdline section..."
+        objcopy --update-section .cmdline=/tmp/new-cmdline.txt "$UKI_FILE" "$UKI_FILE.new" 2>&1 || {
+            echo "⚠ objcopy failed, trying alternative method..."
+            # Alternative: rebuild entire UKI (more complex, needs kernel/initrd extraction)
+            echo "✗✗✗ ERROR: Cannot modify UKI cmdline"
+            umount mnt
+            exit 1
+        }
+        mv "$UKI_FILE.new" "$UKI_FILE"
+        echo "✓ UKI cmdline section updated"
+    else
+        echo "✗✗✗ ERROR: objcopy command not available"
+        umount mnt
+        exit 1
+    fi
+    
+    # Verify the new cmdline
+    echo ""
+    echo "Verifying updated UKI..."
+    /usr/lib/systemd/ukify inspect "$UKI_FILE" > /tmp/uki-inspect-new.txt 2>&1 || true
+    NEW_CMDLINE_VERIFY=$(grep -A 5 "\.cmdline:" /tmp/uki-inspect-new.txt | grep -v "\.cmdline:" | head -1 | xargs || echo "")
+    echo "Verified cmdline: $NEW_CMDLINE_VERIFY"
+    
+    if echo "$NEW_CMDLINE_VERIFY" | grep -q "roothash=$RH"; then
+        echo "✓✓✓ SUCCESS: roothash embedded in UKI"
+    else
+        echo "✗✗✗ ERROR: roothash NOT found in rebuilt UKI"
+        echo "This is critical - UKI will not boot with dm-verity"
+        umount mnt
+        exit 1
+    fi
+    
+    if echo "$NEW_CMDLINE_VERIFY" | grep -q "systemd.volatile=overlay"; then
+        echo "✓✓✓ SUCCESS: systemd.volatile=overlay embedded in UKI"
+    else
+        echo "✗✗✗ WARNING: systemd.volatile=overlay NOT found in rebuilt UKI"
+    fi
+    
+    # Final summary
     echo ""
     echo "=========================================="
     echo "  Final Boot Configuration"
     echo "=========================================="
-    echo "Boot method: UKI via BOOTX64.CSV"
+    echo "Boot method: UKI with EMBEDDED cmdline"
     echo "UKI file: /EFI/Linux/$UKI_NAME"
     echo ""
-    echo "BOOTX64.CSV entry:"
+    echo "Why embedded cmdline:"
+    echo "  IBM Cloud firmware boots from wrong EFI entry (Boot0001 instead of Boot0002)"
+    echo "  EFI boot entry parameters are ignored"
+    echo "  Solution: Embed roothash directly in UKI .cmdline section"
+    echo ""
+    echo "UKI embedded cmdline:"
+    echo "  $NEW_CMDLINE_VERIFY"
+    echo ""
+    echo "BOOTX64.CSV (also updated for completeness):"
     cat "$BOOTX_FILE" | iconv -f UCS-2
     echo ""
-    echo "Kernel will receive:"
-    echo "  - UKI embedded cmdline (if any)"
-    echo "  - PLUS parameters from BOOTX64.CSV:"
-    echo "    roothash=$RH"
-    echo "    systemd.volatile=overlay"
+    echo "Kernel will receive cmdline from:"
+    echo "  ✓ UKI embedded .cmdline section (PRIMARY)"
+    echo "  - BOOTX64.CSV parameters (ignored by IBM Cloud firmware)"
     echo ""
     
     esp_mounted=0
