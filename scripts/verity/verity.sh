@@ -312,15 +312,24 @@ if [ "$APPLY_VERITY" = "true" ]; then
     # Add roothash to kernel cmdline in BOOTX64.CSV
     echo ""
     echo "[3/3] Adding dm-verity parameters to BOOTX64.CSV..."
-    cat "$BOOTX_FILE" | iconv -f UCS-2 | tee tmp-bootx > /dev/null
+    cat "$BOOTX_FILE" | iconv -f UCS-2 > tmp-bootx
+    
+    # Show original for debugging
+    echo "Original line:"
+    cat tmp-bootx | od -c | head -2
     
     # Modify the UKI boot entry to include roothash and systemd.volatile=overlay
     # Format: shimx64.efi,redhat,\EFI\Linux\<uki>.efi ,UKI bootentry
     # Becomes: shimx64.efi,redhat,\EFI\Linux\<uki>.efi roothash=$RH systemd.volatile=overlay ,UKI bootentry
-    sed -i "s/\.efi  *,UKI/.efi roothash=$RH systemd.volatile=overlay ,UKI/" tmp-bootx
+    # Use a more precise pattern that preserves everything after .efi
+    sed -i "s/\(\.efi\) \+,\(.*\)$/\1 roothash=$RH systemd.volatile=overlay ,\2/" tmp-bootx
+    
+    # Show modified for debugging
+    echo "Modified line:"
+    cat tmp-bootx | od -c | head -2
     
     # Convert back to UCS-2 and save
-    cat tmp-bootx | iconv -t UCS-2 | tee "$BOOTX_FILE" > /dev/null
+    cat tmp-bootx | iconv -t UCS-2 > "$BOOTX_FILE"
     
     echo "✓ Updated BOOTX64.CSV:"
     cat "$BOOTX_FILE" | iconv -f UCS-2
