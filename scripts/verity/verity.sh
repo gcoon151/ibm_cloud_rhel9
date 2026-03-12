@@ -208,40 +208,17 @@ function apply_dmverity()
     fi
 
     echo "Root hash: $RH"
+    
+    # Save roothash to local file for COS upload (do this now while we have the value)
+    echo "$RH" > "${VERITY_FOLDER}/roothash.txt"
+    echo "✓ Roothash saved to ${VERITY_FOLDER}/roothash.txt for COS upload"
 
     export RH
 }
 
-function create_uki_addon()
-{
-    UKI_FOLDER=mnt/EFI/Linux
-    ADDON_NAME=verity.addon.efi
-    mount /dev/$EFI_PN mnt
-    esp_mounted=1
-    efi_files=($UKI_FOLDER/*.efi)
-    if [[ ${#efi_files[@]} -eq 1 && -f "${efi_files[0]}" ]]; then
-        UKI_NAME=${efi_files[0]}
-        echo "Found UKI $UKI_NAME"
-        mkdir -p "$UKI_NAME.extra.d"
-    else
-        echo "Error: Either no .efi file or multiple .efi files found."
-        echo "Cannot create the UKI addon."
-        exit 1
-    fi
-    cd $UKI_NAME.extra.d
-    rm -f $ADDON_NAME
-
-    if [[ -n "$SB_PRIVATE_KEY" && -n "$SB_CERTIFICATE" ]]; then
-        ADDON_OPTIONS="--secureboot-private-key=$SB_PRIVATE_KEY --secureboot-certificate=$SB_CERTIFICATE"
-        echo "Signing addon with $SB_PRIVATE_KEY and $SB_CERTIFICATE"
-    fi
-    /usr/lib/systemd/ukify build --cmdline="roothash=$RH systemd.volatile=overlay" --output=$ADDON_NAME --sbat="$ADDON_SBAT" $ADDON_OPTIONS
-    echo "Created UKI addon $UKI_NAME.extra.d/$ADDON_NAME"
-    /usr/lib/systemd/ukify inspect $ADDON_NAME
-    cd - > /dev/null
-    esp_mounted=0
-    umount mnt
-}
+# UKI addon creation removed - roothash is now passed via initdata at runtime
+# The apply-dmverity.service will read roothash from initdata and apply dm-verity
+# Fallback roothash is saved to /etc/dmverity/roothash.txt (see apply_dmverity function)
 
 print_params
 
@@ -275,248 +252,18 @@ echo ""
 call_fsck
 
 if [ "$APPLY_VERITY" = "true" ]; then
-    # Step 3. Apply verity
+    # Step 3. Apply verity and save roothash fallback
     echo ""
     apply_dmverity
-
-    # Step 4. Add roothash to UKI boot configuration via BOOTX64.CSV
+    
     echo ""
     echo "=========================================="
-    echo "  Configuring UKI Boot for dm-verity"
+    echo "  dm-verity Hash Partition Created"
     echo "=========================================="
-    echo "This is a UKI-only image (GRUB removed by kickstart)"
-    echo "Modifying BOOTX64.CSV to add roothash parameter"
-    
-    # Mount EFI partition
-    mount /dev/$EFI_PN mnt
-    esp_mounted=1
-    
-    BOOTX_FILE=mnt/EFI/redhat/BOOTX64.CSV
-    
-    # Validate BOOTX64.CSV exists
+    echo "✓ dm-verity hash partition created"
+    echo "✓ Roothash: $RH"
     echo ""
-    echo "[1/3] Validating UKI boot configuration..."
-    if [ ! -f "$BOOTX_FILE" ]; then
-        echo "ERROR: $BOOTX_FILE not found - UKI boot not configured"
-        umount mnt
-        exit 1
-    fi
-    echo "✓ BOOTX64.CSV found"
-    
-    # Backup and show original
-    echo ""
-    echo "[2/3] Original BOOTX64.CSV:"
-    cp "$BOOTX_FILE" "$BOOTX_FILE.orig"
-    cat "$BOOTX_FILE" | iconv -f UCS-2
-    
-    # Add roothash to kernel cmdline in BOOTX64.CSV
-    echo ""
-    echo "[3/3] Adding dm-verity parameters to BOOTX64.CSV..."
-    cat "$BOOTX_FILE" | iconv -f UCS-2 > tmp-bootx
-    
-    # Show original for debugging
-    echo "Original line:"
-    cat tmp-bootx | od -c | head -2
-    
-    # Modify the UKI boot entry to include roothash and systemd.volatile=overlay
-    # Format: shimx64.efi,redhat,\EFI\Linux\<uki>.efi ,UKI bootentry
-    # Becomes: shimx64.efi,redhat,\EFI\Linux\<uki>.efi roothash=$RH systemd.volatile=overlay ,UKI bootentry
-    # Use a more precise pattern that preserves everything after .efi
-    sed -i "s/\(\.efi\) \+,\(.*\)$/\1 roothash=$RH systemd.volatile=overlay ,\2/" tmp-bootx
-    
-    # Show modified for debugging
-    echo "Modified line:"
-    cat tmp-bootx | od -c | head -2
-    
-    # Convert back to UCS-2 and save
-    cat tmp-bootx | iconv -t UCS-2 > "$BOOTX_FILE"
-    
-    echo "✓ Updated BOOTX64.CSV:"
-    BOOTX_CONTENT=$(cat "$BOOTX_FILE" | iconv -f UCS-2)
-    echo "$BOOTX_CONTENT"
-    
-    # Comprehensive validation of BOOTX64.CSV
-    echo ""
-    echo "=========================================="
-    echo "  Validating BOOTX64.CSV Modification"
-    echo "=========================================="
-    
-    # 1. Validate roothash was added
-    if ! echo "$BOOTX_CONTENT" | grep -q "roothash=$RH"; then
-        echo "✗✗✗ ERROR: roothash NOT found in BOOTX64.CSV"
-        echo "Expected: roothash=$RH"
-        umount mnt
-        exit 1
-    fi
-    echo "✓ roothash parameter present"
-    
-    # 2. Validate systemd.volatile=overlay
-    if ! echo "$BOOTX_CONTENT" | grep -q "systemd.volatile=overlay"; then
-        echo "✗✗✗ ERROR: systemd.volatile=overlay NOT found in BOOTX64.CSV"
-        umount mnt
-        exit 1
-    fi
-    echo "✓ systemd.volatile=overlay parameter present"
-    
-    # 3. Validate "UKI bootentry" field is preserved
-    if ! echo "$BOOTX_CONTENT" | grep -q "UKI bootentry"; then
-        echo "✗✗✗ ERROR: 'UKI bootentry' field MISSING or CORRUPTED"
-        echo "Current content: $BOOTX_CONTENT"
-        echo "This will prevent the boot loader from recognizing the entry!"
-        umount mnt
-        exit 1
-    fi
-    echo "✓ 'UKI bootentry' field preserved"
-    
-    # 4. Validate complete format
-    if ! echo "$BOOTX_CONTENT" | grep -q "\.efi roothash=$RH systemd.volatile=overlay  *,UKI bootentry"; then
-        echo "✗✗✗ WARNING: Format may not be exactly correct"
-        echo "Expected pattern: .efi roothash=... systemd.volatile=overlay ,UKI bootentry"
-        echo "Actual: $BOOTX_CONTENT"
-    else
-        echo "✓ Complete format validated"
-    fi
-    
-    echo ""
-    echo "✓✓✓ SUCCESS: BOOTX64.CSV correctly modified"
-    
-    rm -rf tmp-bootx
-    
-    # Now rebuild the UKI with embedded cmdline
-    echo ""
-    echo "=========================================="
-    echo "  Rebuilding UKI with Embedded Cmdline"
-    echo "=========================================="
-    echo "IBM Cloud boots from wrong EFI entry, so we embed cmdline in UKI itself"
-    
-    # Find the UKI file
-    UKI_FILES=(mnt/EFI/Linux/*.efi)
-    if [ ${#UKI_FILES[@]} -eq 0 ]; then
-        echo "✗✗✗ ERROR: No UKI files found in /EFI/Linux/"
-        umount mnt
-        exit 1
-    fi
-    
-    UKI_FILE="${UKI_FILES[0]}"
-    UKI_NAME=$(basename "$UKI_FILE")
-    echo "Found UKI: $UKI_NAME"
-    echo "Original UKI: $UKI_FILE"
-    
-    # Extract current UKI cmdline
-    echo ""
-    echo "[1/4] Inspecting original UKI..."
-    if command -v ukify >/dev/null 2>&1; then
-        /usr/lib/systemd/ukify inspect "$UKI_FILE" > /tmp/uki-inspect-orig.txt 2>&1 || true
-        ORIG_CMDLINE=$(grep -A 5 "\.cmdline:" /tmp/uki-inspect-orig.txt | grep -v "\.cmdline:" | head -1 | xargs || echo "")
-        echo "Original cmdline: ${ORIG_CMDLINE:-<empty>}"
-    else
-        echo "✗✗✗ ERROR: ukify command not available"
-        umount mnt
-        exit 1
-    fi
-    
-    # Build new cmdline with roothash
-    echo ""
-    echo "[2/4] Building new cmdline..."
-    if [ -n "$ORIG_CMDLINE" ]; then
-        NEW_CMDLINE="$ORIG_CMDLINE roothash=$RH systemd.volatile=overlay"
-    else
-        NEW_CMDLINE="roothash=$RH systemd.volatile=overlay"
-    fi
-    echo "New cmdline: $NEW_CMDLINE"
-    
-    # Backup original UKI
-    echo ""
-    echo "[3/4] Backing up original UKI..."
-    cp "$UKI_FILE" "$UKI_FILE.orig"
-    echo "✓ Backup: $UKI_FILE.orig"
-    
-    # Rebuild UKI with new cmdline
-    echo ""
-    echo "[4/4] Rebuilding UKI with embedded cmdline..."
-    
-    # Extract sections from original UKI
-    /usr/lib/systemd/ukify inspect "$UKI_FILE" --json=short > /tmp/uki-sections.json 2>&1 || true
-    
-    # Use ukify to rebuild with new cmdline
-    # We need to extract the kernel, initrd, etc. and rebuild
-    # For now, use a simpler approach: use objcopy to replace the .cmdline section
-    
-    # Create new cmdline file
-    echo -n "$NEW_CMDLINE" > /tmp/new-cmdline.txt
-    
-    # Use objcopy to update the .cmdline section in the UKI
-    if command -v objcopy >/dev/null 2>&1; then
-        echo "Using objcopy to update .cmdline section..."
-        objcopy --update-section .cmdline=/tmp/new-cmdline.txt "$UKI_FILE" "$UKI_FILE.new" 2>&1 || {
-            echo "⚠ objcopy failed, trying alternative method..."
-            # Alternative: rebuild entire UKI (more complex, needs kernel/initrd extraction)
-            echo "✗✗✗ ERROR: Cannot modify UKI cmdline"
-            umount mnt
-            exit 1
-        }
-        mv "$UKI_FILE.new" "$UKI_FILE"
-        echo "✓ UKI cmdline section updated"
-    else
-        echo "✗✗✗ ERROR: objcopy command not available"
-        umount mnt
-        exit 1
-    fi
-    
-    # Verify the new cmdline
-    echo ""
-    echo "Verifying updated UKI..."
-    /usr/lib/systemd/ukify inspect "$UKI_FILE" > /tmp/uki-inspect-new.txt 2>&1 || true
-    NEW_CMDLINE_VERIFY=$(grep -A 5 "\.cmdline:" /tmp/uki-inspect-new.txt | grep -v "\.cmdline:" | head -1 | xargs || echo "")
-    echo "Verified cmdline: $NEW_CMDLINE_VERIFY"
-    
-    if echo "$NEW_CMDLINE_VERIFY" | grep -q "roothash=$RH"; then
-        echo "✓✓✓ SUCCESS: roothash embedded in UKI"
-    else
-        echo "✗✗✗ ERROR: roothash NOT found in rebuilt UKI"
-        echo "This is critical - UKI will not boot with dm-verity"
-        umount mnt
-        exit 1
-    fi
-    
-    if echo "$NEW_CMDLINE_VERIFY" | grep -q "systemd.volatile=overlay"; then
-        echo "✓✓✓ SUCCESS: systemd.volatile=overlay embedded in UKI"
-    else
-        echo "✗✗✗ WARNING: systemd.volatile=overlay NOT found in rebuilt UKI"
-    fi
-    
-    # Final summary
-    echo ""
-    echo "=========================================="
-    echo "  Final Boot Configuration"
-    echo "=========================================="
-    echo "Boot method: UKI with EMBEDDED cmdline"
-    echo "UKI file: /EFI/Linux/$UKI_NAME"
-    echo ""
-    echo "Why embedded cmdline:"
-    echo "  IBM Cloud firmware boots from wrong EFI entry (Boot0001 instead of Boot0002)"
-    echo "  EFI boot entry parameters are ignored"
-    echo "  Solution: Embed roothash directly in UKI .cmdline section"
-    echo ""
-    echo "UKI embedded cmdline:"
-    echo "  $NEW_CMDLINE_VERIFY"
-    echo ""
-    echo "BOOTX64.CSV (also updated for completeness):"
-    cat "$BOOTX_FILE" | iconv -f UCS-2
-    echo ""
-    echo "Kernel will receive cmdline from:"
-    echo "  ✓ UKI embedded .cmdline section (PRIMARY)"
-    echo "  - BOOTX64.CSV parameters (ignored by IBM Cloud firmware)"
-    echo ""
-    
-    esp_mounted=0
-    umount mnt
-    
-    echo "=========================================="
-    echo "  UKI Boot Configuration Complete"
-    echo "=========================================="
-    echo "✓ BOOTX64.CSV configured with dm-verity parameters"
-    echo "✓ Ready for upload and deployment"
+    echo "NOTE: Roothash will be saved to image partitions after NBD cleanup"
     echo ""
 fi
 
@@ -541,6 +288,31 @@ if qemu-img check -r all "$DISK" 2>&1 | tee /tmp/qemu-img-repair.log; then
     echo "✓ QCOW2 image repaired successfully"
 else
     echo "⚠ QCOW2 repair completed with warnings (check output above)"
+fi
+
+# Now that NBD is disconnected and image is repaired, save roothash to partitions
+if [ "$APPLY_VERITY" = "true" ] && [ -n "$RH" ]; then
+    echo ""
+    echo "Saving roothash to image partitions..."
+    
+    # Save to EFI partition (not dm-verity protected, but covered by attestation)
+    # This solves the chicken-egg problem: roothash can't be in the partition it's protecting
+    virt-customize -a $DISK \
+        --mkdir /boot/efi/dmverity \
+        --write /boot/efi/dmverity/roothash.txt:"$RH" \
+        --run-command "chmod 644 /boot/efi/dmverity/roothash.txt"
+    echo "✓ Roothash saved to /boot/efi/dmverity/roothash.txt (primary)"
+    
+    # Also save to /etc for convenience (will be read-only after dm-verity)
+    virt-customize -a $DISK \
+        --mkdir /etc/dmverity \
+        --write /etc/dmverity/roothash.txt:"$RH" \
+        --run-command "chmod 644 /etc/dmverity/roothash.txt"
+    echo "✓ Roothash also saved to /etc/dmverity/roothash.txt (convenience)"
+    
+    echo ""
+    echo "NOTE: Roothash in EFI partition is covered by image attestation"
+    echo "      Customers can also fetch from COS bucket for Trustee integration"
 fi
 
 cd $here

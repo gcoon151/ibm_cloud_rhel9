@@ -1,5 +1,22 @@
 # How to create a dm-verity image via container
 
+## Required Packages in Base Image
+
+The kickstart file (`helpers/rhel9-dm-root.ks`) installs the following packages that are **required** for dm-verity UKI modification:
+
+- **systemd-ukify** - Required to rebuild UKI with embedded roothash
+- **binutils** - Provides `objcopy` command needed to extract/rebuild UKI sections
+
+**Important:** These packages remain in the final sealed image because:
+1. The dm-verity hash is calculated before UKI modification
+2. The UKI modification script runs inside the sealed image
+3. The script needs these tools from `/usr/bin/` to rebuild the UKI
+4. Removing them after sealing would invalidate the roothash
+
+While this slightly increases the attack surface, it is required by the current dm-verity architecture.
+
+## Build Instructions
+
 1. Download official RHEL ISO and build a CVM with `helpers/rhel9-dm-root.ks`:
 ```
 ISO_PATH=RHEL-9.6.0-x86_64-dvd1.iso

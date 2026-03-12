@@ -75,6 +75,8 @@ cryptsetup
 kernel-uki-virt
 kernel-uki-virt-addons
 uki-direct
+systemd-ukify
+binutils
 
 # versionlock plugin
 python3-dnf-plugin-versionlock
