@@ -13,6 +13,17 @@ semanage fcontext -a -t bin_t /usr/sbin/ip && restorecon -v /usr/sbin/ip
 
 systemctl enable /etc/systemd/system/luks-scratch.service
 
+# Configure SSH service based on SSHD_SERVICE environment variable
+# Default is enabled (true), set to 'false' to disable for security
+if [ "${SSHD_SERVICE:-true}" = "false" ]; then
+    echo "Disabling SSH service for security..."
+    systemctl disable sshd.service
+    systemctl mask sshd.service
+    echo "✓ SSH service disabled and masked"
+else
+    echo "SSH service remains enabled (default)"
+fi
+
 # Configuration to make PCR values to be printed at boot
 cat <<EOF > /usr/libexec/gen-issue
 #!/usr/bin/env bash
