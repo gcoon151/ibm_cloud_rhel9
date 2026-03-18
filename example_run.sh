@@ -18,12 +18,18 @@ sudo podman build -t coco-podvm \
     -f Dockerfile .
 
 [[ -n "$ROOT_PASSWORD" ]] && run_extras+=" -e ROOT_PASSWORD=$ROOT_PASSWORD "
+[[ -n "$SSHD_SERVICE" ]] && run_extras+=" -e SSHD_SERVICE=$SSHD_SERVICE "
+[[ -n "$APPLY_VERITY" ]] && run_extras+=" -e APPLY_VERITY=$APPLY_VERITY "
+[[ -n "$PODVM_BINARY" ]] && run_extras+=" -e PODVM_BINARY=$PODVM_BINARY "
+[[ -n "$PAUSE_BUNDLE" ]] && run_extras+=" -e PAUSE_BUNDLE=$PAUSE_BUNDLE "
 
 sudo podman run --rm \
     --privileged \
     -v $QCOW2:/disk.qcow2 \
     $CERT_OPTIONS \
     -v /lib/modules:/lib/modules:ro,Z \
+    -v /boot:/boot:ro \
+    -v /dev:/dev \
     --user 0 \
     --security-opt=apparmor=unconfined \
     --security-opt=seccomp=unconfined \
