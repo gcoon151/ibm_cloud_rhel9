@@ -11,6 +11,24 @@ tar -xzvf /tmp/luks-config.tar.gz -C /
 # fixes a failure of the podns@netns service
 semanage fcontext -a -t bin_t /usr/sbin/ip && restorecon -v /usr/sbin/ip
 
+# Fix SELinux context for kata-agent binaries
+semanage fcontext -a -t bin_t /usr/local/bin/kata-agent && restorecon -v /usr/local/bin/kata-agent
+semanage fcontext -a -t bin_t /usr/local/bin/kata-agent-clean && restorecon -v /usr/local/bin/kata-agent-clean
+
+# Create build log
+BUILD_LOG="/var/log/podvm-build.log"
+mkdir -p /var/log
+
+{
+    echo "=========================================="
+    echo "PodVM Build Configuration"
+    echo "Build Date: $(date)"
+    echo "=========================================="
+    echo ""
+} > "$BUILD_LOG"
+
+chmod 644 "$BUILD_LOG"
+
 systemctl enable /etc/systemd/system/luks-scratch.service
 
 # Configuration to make PCR values to be printed at boot
