@@ -5,9 +5,9 @@ INPUT_IMAGE=$1
 SCRIPT_FOLDER=${SCRIPT_FOLDER:-$(dirname $0)}
 SCRIPT_FOLDER=$(realpath $SCRIPT_FOLDER)
 
-PODVM_BINARY_DEF=quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload:osc-podvm-payload-on-push-rmvjh-build-image-index
+PODVM_BINARY_DEF=quay.io/rh-ee-gcoon/podvm_binaries:candidate
 PODVM_BINARY_LOCATION_DEF=/podvm-binaries.tar.gz
-PAUSE_BUNDLE_DEF=quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload:osc-podvm-payload-on-push-rmvjh-build-image-index
+PAUSE_BUNDLE_DEF=quay.io/rh-ee-gcoon/podvm_binaries:candidate
 PAUSE_BUNDLE_LOCATION_DEF=/pause-bundle.tar.gz
 
 function local_help()
@@ -80,12 +80,61 @@ ls $ARTIFACTS_FOLDER
 echo ""
 EXTRA_ARGS=""
 [[ -n "$ROOT_PASSWORD" ]] && EXTRA_ARGS=" --root-password password:${ROOT_PASSWORD} "
+
+# Check if Uptycs files exist before adding them to virt-customize
+UPTYCS_COPY_ARGS=""
+UPTYCS_RUN_ARGS=""
+if [ -f "$ARTIFACTS_FOLDER/uptycs-complete.tar.gz" ]; then
+    echo "Found Uptycs complete package, will install into image"
+    # Copy Uptycs files to /tmp/ in the VM image (same pattern as other files)
+    UPTYCS_COPY_ARGS="--copy-in $ARTIFACTS_FOLDER/uptycs-complete.tar.gz:/tmp/ "
+    
+    if [ -f "$ARTIFACTS_FOLDER/provision-uptycs.sh" ]; then
+        UPTYCS_COPY_ARGS="$UPTYCS_COPY_ARGS --copy-in $ARTIFACTS_FOLDER/provision-uptycs.sh:/tmp/ "
+    fi
+    
+    if [ -f "$ARTIFACTS_FOLDER/uptycs-osquery.service" ]; then
+        UPTYCS_COPY_ARGS="$UPTYCS_COPY_ARGS --copy-in $ARTIFACTS_FOLDER/uptycs-osquery.service:/tmp/ "
+    fi
+    
+    # Run install script after podvm_maker.sh
+    UPTYCS_RUN_ARGS="--run $ARTIFACTS_FOLDER/install-uptycs.sh "
+else
+    echo "Uptycs complete package not found, skipping Uptycs installation"
+fi
+
+# Check if dm-verity configuration service exists (two-stage boot approach)
+DMVERITY_COPY_ARGS=""
+DMVERITY_RUN_ARGS=""
+if [ -f "$ARTIFACTS_FOLDER/dmverity-configure.service" ] && [ -f "$ARTIFACTS_FOLDER/configure-dmverity.sh" ] && [ -f "$ARTIFACTS_FOLDER/install-dmverity-configure.sh" ]; then
+    echo "Found dm-verity configuration service, will install for two-stage boot"
+    DMVERITY_COPY_ARGS="--copy-in $ARTIFACTS_FOLDER/dmverity-configure.service:/tmp/ "
+    DMVERITY_COPY_ARGS="$DMVERITY_COPY_ARGS --copy-in $ARTIFACTS_FOLDER/configure-dmverity.sh:/tmp/ "
+    DMVERITY_RUN_ARGS="--run $ARTIFACTS_FOLDER/install-dmverity-configure.sh "
+else
+    echo "dm-verity configuration service not found, skipping dm-verity installation"
+fi
+
+# Note: Per-container metrics functionality has been abandoned
+# Metrics configuration code removed to eliminate warning messages
+METRICS_COPY_ARGS=""
+METRICS_RUN_ARGS=""
+
 virt-customize \
     --copy-in $ARTIFACTS_FOLDER/podvm-binaries.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/pause-bundle.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/luks-config.tar.gz:/tmp/ \
+    ${UPTYCS_COPY_ARGS} \
+    ${DMVERITY_COPY_ARGS} \
+    ${METRICS_COPY_ARGS} \
     --run $ARTIFACTS_FOLDER/podvm_maker.sh \
-    --uninstall cloud-init \
+    ${UPTYCS_RUN_ARGS} \
+    ${DMVERITY_RUN_ARGS} \
+    ${METRICS_RUN_ARGS} \
     --uninstall WALinuxAgent \
     ${EXTRA_ARGS} \
     -a $INPUT_IMAGE
+
+# Note: systemd-ukify and binutils are NOT removed here
+# They are needed by verity.sh which runs after this script
+# verity.sh will remove them after UKI modification is complete

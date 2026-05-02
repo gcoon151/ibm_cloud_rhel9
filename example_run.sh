@@ -24,10 +24,11 @@ sudo podman run --rm \
     -v $QCOW2:/disk.qcow2 \
     $CERT_OPTIONS \
     -v /lib/modules:/lib/modules:ro,Z \
+    -v /boot:/boot:ro \
+    -v /dev:/dev \
     --user 0 \
     --security-opt=apparmor=unconfined \
     --security-opt=seccomp=unconfined \
-    --mount type=bind,source=/dev,target=/dev \
     --mount type=bind,source=/run/udev,target=/run/udev \
     $run_extras \
     localhost/coco-podvm

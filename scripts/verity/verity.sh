@@ -208,40 +208,17 @@ function apply_dmverity()
     fi
 
     echo "Root hash: $RH"
+    
+    # Save roothash to local file for COS upload (do this now while we have the value)
+    echo "$RH" > "${VERITY_FOLDER}/roothash.txt"
+    echo "✓ Roothash saved to ${VERITY_FOLDER}/roothash.txt for COS upload"
 
     export RH
 }
 
-function create_uki_addon()
-{
-    UKI_FOLDER=mnt/EFI/Linux
-    ADDON_NAME=verity.addon.efi
-    mount /dev/$EFI_PN mnt
-    esp_mounted=1
-    efi_files=($UKI_FOLDER/*.efi)
-    if [[ ${#efi_files[@]} -eq 1 && -f "${efi_files[0]}" ]]; then
-        UKI_NAME=${efi_files[0]}
-        echo "Found UKI $UKI_NAME"
-        mkdir -p "$UKI_NAME.extra.d"
-    else
-        echo "Error: Either no .efi file or multiple .efi files found."
-        echo "Cannot create the UKI addon."
-        exit 1
-    fi
-    cd $UKI_NAME.extra.d
-    rm -f $ADDON_NAME
-
-    if [[ -n "$SB_PRIVATE_KEY" && -n "$SB_CERTIFICATE" ]]; then
-        ADDON_OPTIONS="--secureboot-private-key=$SB_PRIVATE_KEY --secureboot-certificate=$SB_CERTIFICATE"
-        echo "Signing addon with $SB_PRIVATE_KEY and $SB_CERTIFICATE"
-    fi
-    /usr/lib/systemd/ukify build --cmdline="roothash=$RH systemd.volatile=overlay" --output=$ADDON_NAME --sbat="$ADDON_SBAT" $ADDON_OPTIONS
-    echo "Created UKI addon $UKI_NAME.extra.d/$ADDON_NAME"
-    /usr/lib/systemd/ukify inspect $ADDON_NAME
-    cd - > /dev/null
-    esp_mounted=0
-    umount mnt
-}
+# UKI addon creation removed - roothash is now passed via initdata at runtime
+# The apply-dmverity.service will read roothash from initdata and apply dm-verity
+# Fallback roothash is saved to /etc/dmverity/roothash.txt (see apply_dmverity function)
 
 print_params
 
@@ -275,18 +252,67 @@ echo ""
 call_fsck
 
 if [ "$APPLY_VERITY" = "true" ]; then
-    # Step 3. Apply verity
+    # Step 3. Apply verity and save roothash fallback
     echo ""
     apply_dmverity
-
-    # Step 4. Prepare and install the addon
+    
     echo ""
-    create_uki_addon
+    echo "=========================================="
+    echo "  dm-verity Hash Partition Created"
+    echo "=========================================="
+    echo "✓ dm-verity hash partition created"
+    echo "✓ Roothash: $RH"
+    echo ""
+    echo "NOTE: Roothash will be saved to image partitions after NBD cleanup"
+    echo ""
 fi
 
 
 # Cleanup
-qemu-nbd --disconnect $NBD_DEVICE
-nbd_mounted=0
+if [[ $nbd_mounted == 1 ]]; then
+    echo "Disconnecting NBD device..."
+    qemu-nbd --disconnect $NBD_DEVICE
+    nbd_mounted=0
+fi
 rm -rf mnt
+
+# Wait for NBD device to fully release the image file
+echo ""
+echo "Waiting for NBD device to release image..."
+sleep 3
+
+# Repair QCOW2 metadata corruption caused by systemd-repart via NBD
+# This is expected when creating dm-verity partitions and must be fixed
+echo "Repairing QCOW2 metadata corruption (expected after dm-verity via NBD)..."
+if qemu-img check -r all "$DISK" 2>&1 | tee /tmp/qemu-img-repair.log; then
+    echo "✓ QCOW2 image repaired successfully"
+else
+    echo "⚠ QCOW2 repair completed with warnings (check output above)"
+fi
+
+# Now that NBD is disconnected and image is repaired, save roothash to partitions
+if [ "$APPLY_VERITY" = "true" ] && [ -n "$RH" ]; then
+    echo ""
+    echo "Saving roothash to image partitions..."
+    
+    # Save to EFI partition (not dm-verity protected, but covered by attestation)
+    # This solves the chicken-egg problem: roothash can't be in the partition it's protecting
+    virt-customize -a $DISK \
+        --mkdir /boot/efi/dmverity \
+        --write /boot/efi/dmverity/roothash.txt:"$RH" \
+        --run-command "chmod 644 /boot/efi/dmverity/roothash.txt"
+    echo "✓ Roothash saved to /boot/efi/dmverity/roothash.txt (primary)"
+    
+    # Also save to /etc for convenience (will be read-only after dm-verity)
+    virt-customize -a $DISK \
+        --mkdir /etc/dmverity \
+        --write /etc/dmverity/roothash.txt:"$RH" \
+        --run-command "chmod 644 /etc/dmverity/roothash.txt"
+    echo "✓ Roothash also saved to /etc/dmverity/roothash.txt (convenience)"
+    
+    echo ""
+    echo "NOTE: Roothash in EFI partition is covered by image attestation"
+    echo "      Customers can also fetch from COS bucket for Trustee integration"
+fi
+
 cd $here

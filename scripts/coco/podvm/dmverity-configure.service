@@ -1,0 +1,16 @@
+[Unit]
+Description=Configure dm-verity for next boot
+DefaultDependencies=no
+Before=agent-protocol-forwarder.service
+Before=kata-agent.service
+ConditionPathExists=!/var/lib/dmverity-configured
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/configure-dmverity.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

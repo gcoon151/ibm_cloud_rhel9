@@ -1,15 +1,6 @@
 #! /bin/bash
 
-dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/ && dnf install -y --nogpgcheck afterburn e2fsprogs && dnf clean all && dnf config-manager --set-disabled "*centos*"
-cat <<EOF > /etc/systemd/system/afterburn-checkin.service
-[Unit]
-ConditionKernelCommandLine=
-
-[Service]
-ExecStart=
-ExecStart=-/usr/bin/afterburn --provider=azure --check-in
-EOF
-ln -s ../afterburn-checkin.service /etc/systemd/system/multi-user.target.wants/afterburn-checkin.service
+dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/ && dnf install -y --nogpgcheck e2fsprogs && dnf clean all && dnf config-manager --set-disabled "*centos*"
 
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
@@ -19,6 +10,24 @@ tar -xzvf /tmp/luks-config.tar.gz -C /
 
 # fixes a failure of the podns@netns service
 semanage fcontext -a -t bin_t /usr/sbin/ip && restorecon -v /usr/sbin/ip
+
+# Fix SELinux context for kata-agent binaries
+semanage fcontext -a -t bin_t /usr/local/bin/kata-agent && restorecon -v /usr/local/bin/kata-agent
+semanage fcontext -a -t bin_t /usr/local/bin/kata-agent-clean && restorecon -v /usr/local/bin/kata-agent-clean
+
+# Create build log
+BUILD_LOG="/var/log/podvm-build.log"
+mkdir -p /var/log
+
+{
+    echo "=========================================="
+    echo "PodVM Build Configuration"
+    echo "Build Date: $(date)"
+    echo "=========================================="
+    echo ""
+} > "$BUILD_LOG"
+
+chmod 644 "$BUILD_LOG"
 
 systemctl enable /etc/systemd/system/luks-scratch.service
 
@@ -75,3 +84,45 @@ ExecStartPre=-/bin/mount -t iso9660 -o ro /dev/disk/by-label/cidata /media/cidat
 # The digest is a string in hex representation, we truncate it to a 32 bytes hex string
 ExecStartPost=-/bin/bash -c 'tpm2_pcrextend 8:sha256=\$(head -c64 /run/peerpod/initdata.digest)'
 EOF
+
+# Install Uptycs EDR agent
+echo "=========================================="
+echo "Installing Uptycs EDR agent..."
+echo "=========================================="
+
+# Debug: List files in /scripts/coco/podvm/
+echo "DEBUG: Files in /scripts/coco/podvm/:"
+ls -la /scripts/coco/podvm/ || echo "ERROR: Directory not found"
+echo ""
+
+# Check for install script
+if [ -f /scripts/coco/podvm/install-uptycs.sh ]; then
+    echo "✓ Found install-uptycs.sh, running installation..."
+    echo ""
+    
+    # Run the installation script with verbose output
+    bash -x /scripts/coco/podvm/install-uptycs.sh
+    
+    if [ $? -eq 0 ]; then
+        echo ""
+        echo "=========================================="
+        echo "✓ Uptycs EDR agent installed successfully"
+        echo "=========================================="
+        
+        # Verify installation
+        echo "Verification:"
+        echo "  Binary: $(ls -lh /opt/uptycs/bin/osqueryd 2>&1)"
+        echo "  Service: $(ls -lh /etc/systemd/system/uptycs-osquery.service 2>&1)"
+        echo "  Enabled: $(systemctl is-enabled uptycs-osquery.service 2>&1)"
+    else
+        echo ""
+        echo "=========================================="
+        echo "⚠ Uptycs EDR installation FAILED"
+        echo "=========================================="
+    fi
+else
+    echo "=========================================="
+    echo "⚠ install-uptycs.sh NOT FOUND, skipping"
+    echo "=========================================="
+fi
+echo ""
