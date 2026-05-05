@@ -28,6 +28,9 @@ KS_FILE="$(dirname $0)/rhel9-dm-root.ks"
 OLD_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY.qcow2"
 NEW_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY-NEW.qcow2"
 BACKUP_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY-BACKUP-$(date +%Y%m%d).qcow2"
+VM_NAME="rhel97-ks-NEW"
+# virt-install creates disk as: <vm-name>-1.qcow2 when using --disk without path
+CREATED_IMAGE="/home/gcoon/.local/share/libvirt/images/${VM_NAME}-1.qcow2"
 
 echo "=========================================="
 echo "Base Image Rebuild Script"
@@ -107,7 +110,7 @@ virt-install \
     --os-variant rhel9.0 \
     --arch x86_64 \
     --boot uefi \
-    --name rhel97-ks-NEW \
+    --name "$VM_NAME" \
     --memory 8192 \
     --location "$ISO_PATH" \
     --disk bus=scsi,size=3 \
@@ -118,12 +121,23 @@ virt-install \
 
 echo ""
 echo "=========================================="
-echo "Step 3: Verify new image"
+echo "Step 3: Rename and verify new image"
 echo "=========================================="
 echo ""
 
+# virt-install creates the image with -1 suffix, rename it
+if [ ! -f "$CREATED_IMAGE" ]; then
+    echo "ERROR: Created image not found at $CREATED_IMAGE"
+    echo "Looking for images..."
+    ls -lh /home/gcoon/.local/share/libvirt/images/${VM_NAME}*.qcow2 2>/dev/null || echo "No images found"
+    exit 1
+fi
+
+echo "Renaming $CREATED_IMAGE to $NEW_IMAGE"
+mv "$CREATED_IMAGE" "$NEW_IMAGE"
+
 if [ ! -f "$NEW_IMAGE" ]; then
-    echo "ERROR: New image was not created!"
+    echo "ERROR: Failed to rename image!"
     exit 1
 fi
 
