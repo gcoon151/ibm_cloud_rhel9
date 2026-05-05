@@ -143,6 +143,19 @@ build_qcow2() {
         exit 1
     fi
     
+    # Copy Uptycs tarball from edr/ to scripts/coco/podvm/ if it exists
+    # This is required because the Dockerfile copies scripts/ into the container
+    cd ~/gits/ibm_cloud_rhel9 || exit 1
+    UPTYCS_TARBALL=$(ls -t edr/uptycs-complete*.tar.gz 2>/dev/null | head -1)
+    if [ -n "$UPTYCS_TARBALL" ]; then
+        log_info "Found Uptycs package: $UPTYCS_TARBALL"
+        cp "$UPTYCS_TARBALL" scripts/coco/podvm/uptycs-complete.tar.gz
+        ln -sf uptycs-complete.tar.gz scripts/coco/podvm/uptycs-binary.tar.gz
+        log_info "✓ Copied to scripts/coco/podvm/ for container build"
+    else
+        log_warn "No Uptycs package found in edr/ - build will proceed without Uptycs"
+    fi
+    
     # Use the most recent payload image if not building fresh
     if [ "$MODE" = "qcow2" ]; then
         PAYLOAD_IMAGE=$(podman images --format "{{.Repository}}:{{.Tag}}" | grep "rh-ee-gcoon/podvm_binaries" | head -1)
