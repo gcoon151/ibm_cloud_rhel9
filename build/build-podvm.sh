@@ -260,11 +260,17 @@ build_qcow2() {
         fi
         echo ""
         
-        # Note: QCOW2 integrity check and repair is handled by verity.sh
-        # The verity script repairs metadata corruption caused by systemd-repart
-        # which is expected when creating dm-verity partitions via NBD.
-        # No need for redundant check here.
-        log_info "✓ QCOW2 image ready (repaired by verity script)"
+        # Verify QCOW2 integrity before proceeding
+        log_info "Verifying QCOW2 image integrity..."
+        if ! qemu-img check "$QCOW2" 2>&1 | tee /tmp/qemu-img-check.log; then
+            log_error "QCOW2 image has corruption errors!"
+            log_error "This usually indicates a problem during dm-verity partition creation"
+            cat /tmp/qemu-img-check.log
+            log_error "Build failed - image is corrupted and cannot be used"
+            rm -f "$QCOW2"
+            exit 1
+        fi
+        log_info "✓ QCOW2 image integrity verified"
         echo ""
         
         # Auto-upload to IBM Cloud if upload script exists (unless --skip-upload)
