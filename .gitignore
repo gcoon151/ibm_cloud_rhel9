@@ -14,9 +14,8 @@ builddir/
 .env
 
 # Uptycs specific - exclude binaries and configs with potential secrets
-scripts/coco/podvm/uptycs-binary.tar.gz
 scripts/coco/podvm/luks-config.tar.gz
-edr/uptycs-complete.tar.gz
+# NOTE: Temporarily allowing uptycs tarballs for container builds - see TODO.md
 
 # Build output and logs
 build/*.log
