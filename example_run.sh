@@ -13,7 +13,8 @@ if [[ -n "${IMAGE_CERTIFICATE_PEM}" && -n "${IMAGE_PRIVATE_KEY}" ]]; then
     CERT_OPTIONS="-v $IMAGE_CERTIFICATE_PEM:/public.pem:ro,Z -v $IMAGE_PRIVATE_KEY:/private.key:ro,Z"
 fi
 
-sudo podman build -t coco-podvm \
+# Force rebuild if Uptycs files were just added (no cache for ADD layer)
+sudo podman build --no-cache -t coco-podvm \
     ${subscription} \
     -f Dockerfile .
 
