@@ -66,8 +66,8 @@ build_binaries() {
     log_info "=== Building Payload Binaries ==="
     
     # Navigate to build directory
-    cd ~/gits/openshift/cloud-api-adaptor || {
-        log_error "Build directory not found: ~/gits/openshift/cloud-api-adaptor"
+    cd ~/gits/ibm_cloud_rhel9/cloud-api-adaptor || {
+        log_error "Build directory not found: ~/gits/ibm_cloud_rhel9/cloud-api-adaptor"
         exit 1
     }
     
@@ -149,9 +149,9 @@ build_qcow2() {
         log_info "Using existing payload: $PAYLOAD_IMAGE"
     fi
     
-    # Navigate to coco-podvm-scripts
-    cd ~/gits/coco-podvm-scripts || {
-        log_error "Directory not found: ~/gits/coco-podvm-scripts"
+    # Navigate to ibm_cloud_rhel9 (consolidated build directory)
+    cd ~/gits/ibm_cloud_rhel9 || {
+        log_error "Directory not found: ~/gits/ibm_cloud_rhel9"
         exit 1
     }
     
@@ -171,8 +171,8 @@ build_qcow2() {
     # 3. The UKI boots with Secure Boot enabled using Red Hat's default keys
     # 4. No need to rebuild/sign UKI since we don't modify kernel cmdline in the image
     # If custom signing is needed in the future, uncomment these lines:
-    # export IMAGE_CERTIFICATE=/home/gcoon/gits/coco-podvm-scripts/certs/public_key.pem
-    # export IMAGE_PRIVATE_KEY=/home/gcoon/gits/coco-podvm-scripts/certs/private.key
+    # export IMAGE_CERTIFICATE=/home/gcoon/gits/ibm_cloud_rhel9/certs/public_key.pem
+    # export IMAGE_PRIVATE_KEY=/home/gcoon/gits/ibm_cloud_rhel9/certs/private.key
     
     log_info "Environment configured:"
     echo "  ORG_ID: $ORG_ID"
