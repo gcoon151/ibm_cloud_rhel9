@@ -3,11 +3,12 @@
 # This script runs during virt-customize (image build time)
 # It installs the Uptycs binary and sets up the systemd service
 
-set -e
+set -ex  # -x for debug output, -e to exit on error
 
-# Log to BOTH file and stdout so we can see what's happening
+# Simple logging - just output to stdout, virt-customize will capture it
+# Also save to a log file for post-build inspection
 LOGFILE="/var/log/uptycs-install.log"
-exec > >(tee -a "$LOGFILE") 2>&1
+exec > >(tee "$LOGFILE") 2>&1 || exec 2>&1  # Fallback if tee fails
 
 echo ""
 echo "=========================================="
