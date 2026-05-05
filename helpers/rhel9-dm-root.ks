@@ -85,6 +85,9 @@ e2fsprogs
 %end
 
 %post --erroronfail
+# Update all packages to get latest security fixes (including CVE-2026-31431)
+dnf update -y
+
 # installer may change partition GUIDs. Linux root (x86-64):
 sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 
