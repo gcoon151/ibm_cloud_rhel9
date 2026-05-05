@@ -118,8 +118,8 @@ else
     echo "Warning: kata-agent metrics configuration not found at $METRICS_CONF"
 fi
 
-# uncomment this if you get virt-customize errors. I should make this a debug flag but...
-# export LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
+# Enable debug mode to see what virt-customize is doing
+export LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
 virt-customize \
     --copy-in $ARTIFACTS_FOLDER/podvm-binaries.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/pause-bundle.tar.gz:/tmp/ \
