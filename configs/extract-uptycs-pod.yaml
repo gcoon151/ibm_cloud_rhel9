@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: uptycs-extractor
+  namespace: default
+spec:
+  imagePullSecrets:
+  - name: all-icr-io
+  containers:
+  - name: uptycs-osquery
+    image: us.icr.io/armada-csutil/uptycs-osquery:20260122-a7555d3b9aac00a50e4bcfb92e25eeffd57a7ad8
+    command: ["sleep", "3600"]
+    imagePullPolicy: IfNotPresent
+  restartPolicy: Never
+
+# Made with Bob
