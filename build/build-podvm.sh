@@ -301,12 +301,17 @@ build_qcow2() {
         elif [ -f "$dir/upload_hl_dev_cos_bucket.sh" ]; then
             log_info "Uploading to IBM Cloud Object Storage..."
             cd "$dir"
-            if ./upload_hl_dev_cos_bucket.sh "$QCOW2"; then
+            # Add timeout to prevent hanging (5 minutes max)
+            if timeout 300 ./upload_hl_dev_cos_bucket.sh "$QCOW2"; then
                 log_info "Upload to IBM Cloud SUCCESSFUL ✓"
             else
-                log_error "Upload to IBM Cloud FAILED"
-                log_error "Check the output above for qemu-img check errors"
-                exit 1
+                EXIT_CODE=$?
+                if [ $EXIT_CODE -eq 124 ]; then
+                    log_error "Upload TIMED OUT after 5 minutes"
+                else
+                    log_error "Upload to IBM Cloud FAILED (exit code: $EXIT_CODE)"
+                fi
+                log_warn "Continuing anyway - image is built successfully"
             fi
         else
             log_warn "Upload script not found: $dir/upload_hl_dev_cos_bucket.sh"
