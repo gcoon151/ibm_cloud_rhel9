@@ -235,6 +235,17 @@ build_qcow2() {
     time ./example_run.sh
     
     if [ $? -eq 0 ]; then
+        # Repair QCOW2 metadata corruption caused by dm-verity/systemd-repart
+        # This must happen AFTER the container exits (image no longer locked)
+        if [ "$APPLY_VERITY" = "true" ]; then
+            log_info "Repairing QCOW2 metadata after dm-verity creation..."
+            if qemu-img check -r all "$QCOW2" 2>&1 | tee /tmp/qemu-img-repair.log | grep -q "Repairing"; then
+                log_info "✓ QCOW2 metadata repaired"
+            else
+                log_info "✓ No repairs needed"
+            fi
+        fi
+        
         log_info "QCOW2 build SUCCESSFUL ✓"
         log_info "Image: $QCOW2"
         echo ""
@@ -251,12 +262,21 @@ build_qcow2() {
             log_warn "Uptycs installation log not found in image"
         fi
         
-        # Check if Uptycs binary was installed (correct location: /usr/bin/)
-        log_info "Checking if Uptycs binary was installed..."
-        if virt-ls -a "$QCOW2" /usr/bin/ 2>/dev/null | grep -q osqueryd; then
-            log_info "✓ Uptycs binary found at /usr/bin/osqueryd"
+        # Check Uptycs installation status using marker files
+        log_info "Checking Uptycs installation status..."
+        if virt-ls -a "$QCOW2" / 2>/dev/null | grep -q "UPTYCS_INSTALL_SUCCESS"; then
+            log_info "✓ Uptycs installation completed successfully"
+            # Verify binary exists
+            if virt-ls -a "$QCOW2" /usr/bin/ 2>/dev/null | grep -q osqueryd; then
+                log_info "✓ Uptycs binary confirmed at /usr/bin/osqueryd"
+            else
+                log_warn "WARNING: Install script succeeded but binary not found!"
+            fi
+        elif virt-ls -a "$QCOW2" / 2>/dev/null | grep -q "UPTYCS_INSTALL_STARTED"; then
+            log_error "Uptycs installation STARTED but did NOT complete"
+            log_error "The install script failed partway through"
         else
-            log_warn "Uptycs binary NOT found at /usr/bin/osqueryd - installation may have failed"
+            log_warn "Uptycs installation script may not have run"
         fi
         echo ""
         

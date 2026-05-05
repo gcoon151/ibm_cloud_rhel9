@@ -5,6 +5,9 @@
 
 set -e
 
+# Create marker file immediately to prove script started
+touch /UPTYCS_INSTALL_STARTED
+
 # Log to file for debugging
 LOGFILE="/var/log/uptycs-install.log"
 exec >> "$LOGFILE" 2>&1
@@ -15,6 +18,9 @@ echo "=== Installing Uptycs EDR Agent ==="
 echo "=== $(date) ==="
 echo "=========================================="
 echo ""
+
+# Update marker
+echo "Script logging initialized" > /UPTYCS_INSTALL_STARTED
 
 # List files in /tmp to verify they were copied
 echo "Files in /tmp:"
@@ -217,6 +223,9 @@ echo "  3. Start osqueryd with the extracted config"
 echo ""
 echo "Full installation log saved to: $LOGFILE"
 echo ""
+
+# Create success marker
+echo "Installation completed successfully at $(date)" > /UPTYCS_INSTALL_SUCCESS
 echo "Installed components:"
 echo "  - Binary: /opt/uptycs/bin/osqueryd"
 echo "  - Provisioning script: /usr/local/bin/provision-uptycs.sh"
