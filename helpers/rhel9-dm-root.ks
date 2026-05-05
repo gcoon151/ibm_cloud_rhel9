@@ -43,6 +43,18 @@ sfdisk --wipe always -X gpt /dev/sda << EOF
 2048,1032192,C12A7328-F81F-11D2-BA4B-00A0C93EC93B
 ,5242880,4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 EOF
+
+# Parse ORG_ID and ACTIVATION_KEY from kernel command line
+# Register with Red Hat BEFORE package installation so we get latest packages
+ORG_ID=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ORG_ID=' | cut -d= -f2)
+ACTIVATION_KEY=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ACTIVATION_KEY=' | cut -d= -f2)
+
+if [ -n "$ORG_ID" ] && [ -n "$ACTIVATION_KEY" ]; then
+    echo "Registering with Red Hat subscription manager..."
+    subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY"
+else
+    echo "WARNING: No subscription credentials found, will use ISO packages"
+fi
 %end
 
 part /boot/efi --onpart=sda1 --fstype efi
@@ -85,28 +97,8 @@ e2fsprogs
 %end
 
 %post --erroronfail
-# Parse ORG_ID and ACTIVATION_KEY from kernel command line
-# These are passed via virt-install --extra-args
-ORG_ID=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ORG_ID=' | cut -d= -f2)
-ACTIVATION_KEY=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ACTIVATION_KEY=' | cut -d= -f2)
-
-if [ -z "$ORG_ID" ] || [ -z "$ACTIVATION_KEY" ]; then
-    echo "ERROR: ORG_ID and ACTIVATION_KEY not found in kernel command line"
-    echo "Kernel cmdline: $(cat /proc/cmdline)"
-    exit 1
-fi
-
-# Register with Red Hat subscription manager to enable repos
-subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" || echo "Warning: subscription-manager registration failed"
-
-# Update all packages to get latest security fixes (including CVE-2026-31431)
-dnf update -y || echo "Warning: dnf update failed"
-
-# Remove old kernel to save space and avoid confusion
-# Keep only the latest kernel
-dnf remove -y $(rpm -q kernel | head -n -1) || echo "Warning: old kernel removal failed"
-
 # Clean up subscription data - remove all traces of credentials
+# (Registration happened in %pre, packages were installed with latest versions)
 subscription-manager unregister || echo "Warning: unregister failed"
 subscription-manager clean || echo "Warning: clean failed"
 rm -f /etc/pki/consumer/*.pem
