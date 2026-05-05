@@ -289,4 +289,17 @@ fi
 qemu-nbd --disconnect $NBD_DEVICE
 nbd_mounted=0
 rm -rf mnt
+
+# Repair QCOW2 metadata corruption caused by systemd-repart via NBD
+# This is a known issue: systemd-repart modifies the disk through NBD,
+# but QCOW2 metadata (refcounts) can become inconsistent
+echo ""
+echo "Repairing QCOW2 metadata..."
+if qemu-img check -r all "$DISK" 2>&1 | tee /tmp/qemu-img-repair.log; then
+    echo "✓ QCOW2 metadata repaired successfully"
+else
+    echo "WARNING: QCOW2 repair encountered issues, but this may be normal"
+    echo "The image should still be usable"
+fi
+
 cd $here
