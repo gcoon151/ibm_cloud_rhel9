@@ -5,10 +5,13 @@
 
 set -ex  # -x for debug output, -e to exit on error
 
-# Simple logging - just output to stdout, virt-customize will capture it
-# Also save to a log file for post-build inspection
+# Output directly to stdout - virt-customize will capture it
+# The VM doesn't have tee installed, so we can't use it
+# We'll save output to a log file manually at key points
 LOGFILE="/var/log/uptycs-install.log"
-exec > >(tee "$LOGFILE") 2>&1 || exec 2>&1  # Fallback if tee fails
+
+# Redirect stderr to stdout so all output is visible
+exec 2>&1
 
 echo ""
 echo "=========================================="
@@ -16,6 +19,14 @@ echo "=== Installing Uptycs EDR Agent ==="
 echo "=== $(date) ==="
 echo "=========================================="
 echo ""
+
+# Save start to log file
+{
+    echo "=========================================="
+    echo "=== Installing Uptycs EDR Agent ==="
+    echo "=== $(date) ==="
+    echo "=========================================="
+} > "$LOGFILE"
 
 # Create marker file immediately to prove script started
 echo "[STEP 1/10] Creating start marker..."
