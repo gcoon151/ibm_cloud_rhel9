@@ -85,9 +85,19 @@ e2fsprogs
 %end
 
 %post --erroronfail
+# Parse ORG_ID and ACTIVATION_KEY from kernel command line
+# These are passed via virt-install --extra-args
+ORG_ID=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ORG_ID=' | cut -d= -f2)
+ACTIVATION_KEY=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ACTIVATION_KEY=' | cut -d= -f2)
+
+if [ -z "$ORG_ID" ] || [ -z "$ACTIVATION_KEY" ]; then
+    echo "ERROR: ORG_ID and ACTIVATION_KEY not found in kernel command line"
+    echo "Kernel cmdline: $(cat /proc/cmdline)"
+    exit 1
+fi
+
 # Register with Red Hat subscription manager to enable repos
-# Note: ORG_ID and ACTIVATION_KEY must be set in environment
-subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY} || echo "Warning: subscription-manager registration failed"
+subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" || echo "Warning: subscription-manager registration failed"
 
 # Update all packages to get latest security fixes (including CVE-2026-31431)
 dnf update -y || echo "Warning: dnf update failed"
