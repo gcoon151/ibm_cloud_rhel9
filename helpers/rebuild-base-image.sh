@@ -29,8 +29,10 @@ OLD_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY.qcow2"
 NEW_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY-NEW.qcow2"
 BACKUP_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY-BACKUP-$(date +%Y%m%d).qcow2"
 VM_NAME="rhel97-ks-NEW"
-# virt-install creates disk as: <vm-name>-1.qcow2 when using --disk without path
-CREATED_IMAGE="/home/gcoon/.local/share/libvirt/images/${VM_NAME}-1.qcow2"
+IMAGE_DIR="/home/gcoon/.local/share/libvirt/images"
+# virt-install can create disk as either <vm-name>.qcow2 or <vm-name>-1.qcow2
+CREATED_IMAGE_1="${IMAGE_DIR}/${VM_NAME}.qcow2"
+CREATED_IMAGE_2="${IMAGE_DIR}/${VM_NAME}-1.qcow2"
 
 echo "=========================================="
 echo "Base Image Rebuild Script"
@@ -125,16 +127,26 @@ echo "Step 3: Rename and verify new image"
 echo "=========================================="
 echo ""
 
-# virt-install creates the image with -1 suffix, rename it
-if [ ! -f "$CREATED_IMAGE" ]; then
-    echo "ERROR: Created image not found at $CREATED_IMAGE"
+# virt-install can create the image with or without -1 suffix, find it
+CREATED_IMAGE=""
+if [ -f "$CREATED_IMAGE_1" ]; then
+    CREATED_IMAGE="$CREATED_IMAGE_1"
+elif [ -f "$CREATED_IMAGE_2" ]; then
+    CREATED_IMAGE="$CREATED_IMAGE_2"
+else
+    echo "ERROR: Created image not found"
     echo "Looking for images..."
-    ls -lh /home/gcoon/.local/share/libvirt/images/${VM_NAME}*.qcow2 2>/dev/null || echo "No images found"
+    ls -lh ${IMAGE_DIR}/${VM_NAME}*.qcow2 2>/dev/null || echo "No images found"
     exit 1
 fi
 
-echo "Renaming $CREATED_IMAGE to $NEW_IMAGE"
-mv "$CREATED_IMAGE" "$NEW_IMAGE"
+echo "Found created image: $CREATED_IMAGE"
+if [ "$CREATED_IMAGE" != "$NEW_IMAGE" ]; then
+    echo "Renaming to: $NEW_IMAGE"
+    mv "$CREATED_IMAGE" "$NEW_IMAGE"
+else
+    echo "Image already has correct name"
+fi
 
 if [ ! -f "$NEW_IMAGE" ]; then
     echo "ERROR: Failed to rename image!"
