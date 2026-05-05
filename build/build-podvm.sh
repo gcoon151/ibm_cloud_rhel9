@@ -145,10 +145,6 @@ build_qcow2() {
         log_info "Found Uptycs package: $UPTYCS_TARBALL"
         cp "$UPTYCS_TARBALL" scripts/coco/podvm/uptycs-complete.tar.gz
         log_info "✓ Copied to scripts/coco/podvm/ for container build"
-        
-        # Force container rebuild to pick up new Uptycs files
-        log_info "Removing cached container to pick up Uptycs files..."
-        sudo podman rmi localhost/coco-podvm 2>/dev/null || true
     else
         log_warn "No Uptycs package found in edr/ - build will proceed without Uptycs"
     fi
