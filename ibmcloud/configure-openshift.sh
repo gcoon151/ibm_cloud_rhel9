@@ -39,6 +39,12 @@ OpenShift Management Commands:
       --no-proxy: Use direct connection (recommended)
       Default: Uses proxy configuration
 
+  extract-uptycs [namespace] [output-dir]
+      Extract Uptycs binaries and certificates from container
+      Creates edr/uptycs-complete.tar.gz for podvm builds
+      Default namespace: default
+      Default output: edr
+
   cleanup-pod <pod-name> [namespace]
       Safely cleanup stuck peer-pod by restarting CAA
       Prevents stale CRD issues
@@ -60,6 +66,7 @@ Examples:
   $0 configure-image r014-1a70868e-dd6c-454d-8766-67be36b0121b
   $0 deploy-test
   $0 deploy-edr --no-proxy
+  $0 extract-uptycs
   $0 cleanup-pod edr-test default
   $0 debug-caa --tail 100
   $0 debug-pod test-podvm-candidate
@@ -358,6 +365,111 @@ restart_caa() {
     log_info "✓ CAA restarted successfully"
 }
 
+extract_uptycs() {
+    NAMESPACE="${1:-default}"
+    OUTPUT_DIR="${2:-edr}"
+    
+    check_oc
+    
+    log_info "=== Uptycs Payload Extraction ==="
+    log_info "Namespace: $NAMESPACE"
+    log_info "Output: $OUTPUT_DIR"
+    echo ""
+    
+    # Deploy extractor pod if not exists
+    POD_NAME="uptycs-extractor"
+    if ! oc get pod "$POD_NAME" -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deploying extractor pod..."
+        oc apply -f "$PROJECT_ROOT/configs/extract-uptycs-pod.yaml" -n "$NAMESPACE"
+        
+        log_info "Waiting for pod to start..."
+        oc wait --for=condition=Ready pod/"$POD_NAME" -n "$NAMESPACE" --timeout=120s
+        log_info "✓ Pod ready"
+    else
+        POD_STATUS=$(oc get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.phase}')
+        if [ "$POD_STATUS" != "Running" ]; then
+            log_error "Pod exists but is not running (status: $POD_STATUS)"
+            log_info "Delete and retry: oc delete pod $POD_NAME -n $NAMESPACE"
+            exit 1
+        fi
+        log_info "✓ Using existing pod"
+    fi
+    echo ""
+    
+    # Create output directories
+    mkdir -p "$OUTPUT_DIR/uptycs-package/bin"
+    mkdir -p "$OUTPUT_DIR/uptycs-package/etc"
+    
+    # Extract binaries
+    log_info "Extracting Uptycs binaries..."
+    BINARIES=("osqueryd" "uptycs-protect" "uptycs-nft" "bpf_progs.o" "uptycs_audit_conf.sh")
+    
+    for binary in "${BINARIES[@]}"; do
+        if oc exec "$POD_NAME" -n "$NAMESPACE" -- test -f "/usr/bin/$binary" 2>/dev/null; then
+            oc cp "$NAMESPACE/$POD_NAME:/usr/bin/$binary" "$OUTPUT_DIR/uptycs-package/bin/$binary"
+            log_info "  ✓ Extracted $binary"
+        else
+            log_warn "  ⚠ Not found: $binary"
+        fi
+    done
+    echo ""
+    
+    # Extract certificates
+    log_info "Extracting certificates..."
+    if oc exec "$POD_NAME" -n "$NAMESPACE" -- test -f "/etc/uptycs/ca.crt" 2>/dev/null; then
+        oc cp "$NAMESPACE/$POD_NAME:/etc/uptycs/ca.crt" "$OUTPUT_DIR/uptycs-package/etc/ca.crt"
+        log_info "  ✓ Extracted ca.crt"
+    else
+        log_warn "  ⚠ ca.crt not found"
+    fi
+    echo ""
+    
+    # Get version information from osqueryd
+    log_info "Getting version information..."
+    UPTYCS_FULL_VERSION=$(oc exec "$POD_NAME" -n "$NAMESPACE" -- /usr/bin/osqueryd --version 2>/dev/null | head -1 || echo "unknown")
+    # Extract just the version number (e.g., "5.18.1.18-Uptycs-Protect" from "osqueryd version 5.18.1.18-Uptycs-Protect")
+    UPTYCS_VERSION=$(echo "$UPTYCS_FULL_VERSION" | sed 's/osqueryd version //' | sed 's/-Uptycs-Protect//')
+    
+    # Get container image hash (last 8 chars of the hash in the image tag)
+    CONTAINER_HASH="a7555d3b"  # From: us.icr.io/armada-csutil/uptycs-osquery:20260122-a7555d3b9aac00a50e4bcfb92e25eeffd57a7ad8
+    
+    EXTRACT_DATE=$(date +%Y%m%d)
+    log_info "  Version: $UPTYCS_VERSION"
+    log_info "  Container hash: $CONTAINER_HASH"
+    log_info "  Extract date: $EXTRACT_DATE"
+    
+    # Create version file
+    cat > "$OUTPUT_DIR/uptycs-package/VERSION" << EOF
+Uptycs EDR Package
+Version: $UPTYCS_FULL_VERSION
+Short Version: $UPTYCS_VERSION
+Container Hash: $CONTAINER_HASH
+Extracted: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+Source Image: us.icr.io/armada-csutil/uptycs-osquery:20260122-a7555d3b9aac00a50e4bcfb92e25eeffd57a7ad8
+Extracted by: $(whoami)@$(hostname)
+EOF
+    echo ""
+    
+    # Create tarball with version and hash in filename
+    # Format: uptycs-complete-5.18.1.18-a7555d3b-20260505.tar.gz
+    TARBALL_NAME="uptycs-complete-${UPTYCS_VERSION}-${CONTAINER_HASH}-${EXTRACT_DATE}.tar.gz"
+    log_info "Creating tarball..."
+    tar -czf "$OUTPUT_DIR/$TARBALL_NAME" -C "$OUTPUT_DIR/uptycs-package" .
+    
+    # Create symlink for convenience
+    ln -sf "$TARBALL_NAME" "$OUTPUT_DIR/uptycs-complete.tar.gz"
+    
+    TARBALL_SIZE=$(ls -lh "$OUTPUT_DIR/$TARBALL_NAME" | awk '{print $5}')
+    log_info "✓ Created $OUTPUT_DIR/$TARBALL_NAME ($TARBALL_SIZE)"
+    log_info "✓ Symlink: $OUTPUT_DIR/uptycs-complete.tar.gz -> $TARBALL_NAME"
+    echo ""
+    
+    log_info "=== Extraction Complete ==="
+    log_info "Files ready at: $OUTPUT_DIR/$TARBALL_NAME"
+    log_info "Package contents:"
+    tar -tzf "$OUTPUT_DIR/$TARBALL_NAME" | head -20
+}
+
 # Main command dispatcher
 COMMAND="${1:-}"
 shift || true
@@ -371,6 +483,9 @@ case "$COMMAND" in
         ;;
     deploy-edr)
         deploy_edr "$@"
+        ;;
+    extract-uptycs)
+        extract_uptycs "$@"
         ;;
     cleanup-pod)
         cleanup_pod "$@"

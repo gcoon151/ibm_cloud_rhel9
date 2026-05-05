@@ -2,6 +2,7 @@
 certs/
 builddir/
 *.tar.gz
+!edr/uptycs-complete*.tar.gz
 *.tar
 *.qcow2
 
