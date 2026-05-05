@@ -101,10 +101,13 @@ subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" 
 # Update only kernel packages to get CVE fix
 dnf update -y kernel-uki-virt kernel-uki-virt-addons || echo "Warning: kernel update failed"
 
-# Remove old kernel (keep only the latest)
+# Remove old kernel and its modules (keep only the latest)
 OLD_KERNELS=$(rpm -q kernel-uki-virt | head -n -1)
 if [ -n "$OLD_KERNELS" ] && [ "$OLD_KERNELS" != "package kernel-uki-virt is not installed" ]; then
-    dnf remove -y $OLD_KERNELS || echo "Warning: old kernel removal failed"
+    # Extract version from old kernel package name
+    OLD_VERSION=$(echo $OLD_KERNELS | sed 's/kernel-uki-virt-//')
+    # Remove old kernel and its modules-core package
+    dnf remove -y kernel-uki-virt-$OLD_VERSION kernel-modules-core-$OLD_VERSION || echo "Warning: old kernel removal failed"
 fi
 
 # Clean up subscription data - remove all traces of credentials
