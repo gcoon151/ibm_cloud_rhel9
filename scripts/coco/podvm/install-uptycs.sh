@@ -1,32 +1,41 @@
 #!/bin/bash
 # Install Uptycs EDR agent into PodVM image
-# This script runs during virt-customize (image build time)
-# It installs the Uptycs binary and sets up the systemd service
+# This script runs INSIDE the QCOW2 VM via virt-customize
+# Output goes to virt-customize stdout which the container captures
 
-set -ex  # -x for debug output, -e to exit on error
+# Enable debug mode - show every command as it executes
+set -x
 
-# Output directly to stdout - virt-customize will capture it
-# The VM doesn't have tee installed, so we can't use it
-# We'll save output to a log file manually at key points
+# Exit on any error
+set -e
+
+# Log file for post-build inspection (saved in the QCOW2 image)
 LOGFILE="/var/log/uptycs-install.log"
 
-# Redirect stderr to stdout so all output is visible
-exec 2>&1
+# Check if tee is available
+if command -v tee >/dev/null 2>&1; then
+    HAS_TEE=true
+    echo "tee is available, will log to both stdout and $LOGFILE"
+else
+    HAS_TEE=false
+    echo "tee not available, logging to stdout only"
+fi
 
-echo ""
-echo "=========================================="
-echo "=== Installing Uptycs EDR Agent ==="
-echo "=== $(date) ==="
-echo "=========================================="
-echo ""
+# Logging function that uses tee if available, otherwise just echo
+log() {
+    if [ "$HAS_TEE" = true ]; then
+        echo "$@" | tee -a "$LOGFILE"
+    else
+        echo "$@"
+        echo "$@" >> "$LOGFILE"
+    fi
+}
 
-# Save start to log file
-{
-    echo "=========================================="
-    echo "=== Installing Uptycs EDR Agent ==="
-    echo "=== $(date) ==="
-    echo "=========================================="
-} > "$LOGFILE"
+log "=========================================="
+log "UPTYCS INSTALL START: $(date)"
+log "Running from: $(pwd)"
+log "User: $(whoami)"
+log "=========================================="
 
 # Create marker file immediately to prove script started
 echo "[STEP 1/10] Creating start marker..."
