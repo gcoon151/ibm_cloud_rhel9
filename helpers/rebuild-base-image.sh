@@ -81,6 +81,7 @@ if [ -f "$NEW_IMAGE" ]; then
 fi
 
 # Create new base image
+# Using exact command from README.md - virt-install will create disk automatically
 virt-install \
     --virt-type kvm \
     --os-variant rhel9.0 \
@@ -89,7 +90,7 @@ virt-install \
     --name rhel97-ks-NEW \
     --memory 8192 \
     --location "$ISO_PATH" \
-    --disk path="$NEW_IMAGE",bus=scsi,size=3 \
+    --disk bus=scsi,size=3 \
     --initrd-inject="$KS_FILE" \
     --nographics \
     --extra-args "console=ttyS0 inst.ks=file:/rhel9-dm-root.ks" \
