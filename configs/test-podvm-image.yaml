@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-podvm-candidate
+  namespace: default
+  labels:
+    app: test-podvm
+    version: v1
+  annotations:
+spec:
+  containers:
+    - name: helloworld
+      image: docker.io/istio/examples-helloworld-v1:1.0
+      ports:
+        - containerPort: 5000
+      imagePullPolicy: IfNotPresent
+  runtimeClassName: kata-remote
+
+# Made with Bob

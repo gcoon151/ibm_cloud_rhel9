@@ -1,0 +1,3 @@
+[submodule "cloud-api-adaptor"]
+	path = cloud-api-adaptor
+	url = https://github.com/openshift/cloud-api-adaptor.git

@@ -15,3 +15,11 @@ builddir/
 # Uptycs specific - exclude binaries and configs with potential secrets
 scripts/coco/podvm/uptycs-binary.tar.gz
 scripts/coco/podvm/luks-config.tar.gz
+edr/uptycs-complete.tar.gz
+
+# Build output and logs
+build/*.log
+*.log
+
+# IBM Cloud temporary files
+.ibm_cloud_image_id
