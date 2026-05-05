@@ -137,14 +137,8 @@ build_binaries() {
 build_qcow2() {
     log_info "=== Building QCOW2 Image ==="
     
-    # Check if payload image exists
-    if ! podman images | grep -q "rh-ee-gcoon/podvm_binaries"; then
-        log_error "No payload image found. Run with 'binaries' first or 'all'"
-        exit 1
-    fi
-    
-    # Copy Uptycs tarball from edr/ to scripts/coco/podvm/ if it exists
-    # This is required because the Dockerfile copies scripts/ into the container
+    # Copy Uptycs tarball from edr/ to scripts/coco/podvm/ BEFORE checking payload
+    # This is required because the Dockerfile copies scripts/ into the container at BUILD time
     cd ~/gits/ibm_cloud_rhel9 || exit 1
     UPTYCS_TARBALL=$(ls -t edr/uptycs-complete*.tar.gz 2>/dev/null | head -1)
     if [ -n "$UPTYCS_TARBALL" ]; then
@@ -152,8 +146,18 @@ build_qcow2() {
         cp "$UPTYCS_TARBALL" scripts/coco/podvm/uptycs-complete.tar.gz
         ln -sf uptycs-complete.tar.gz scripts/coco/podvm/uptycs-binary.tar.gz
         log_info "✓ Copied to scripts/coco/podvm/ for container build"
+        
+        # Force container rebuild to pick up new Uptycs files
+        log_info "Removing cached container to pick up Uptycs files..."
+        sudo podman rmi localhost/coco-podvm 2>/dev/null || true
     else
         log_warn "No Uptycs package found in edr/ - build will proceed without Uptycs"
+    fi
+    
+    # Check if payload image exists
+    if ! podman images | grep -q "rh-ee-gcoon/podvm_binaries"; then
+        log_error "No payload image found. Run with 'binaries' first or 'all'"
+        exit 1
     fi
     
     # Use the most recent payload image if not building fresh
