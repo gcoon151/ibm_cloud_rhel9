@@ -102,6 +102,10 @@ subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" 
 # Update all packages to get latest security fixes (including CVE-2026-31431)
 dnf update -y || echo "Warning: dnf update failed"
 
+# Remove old kernel to save space and avoid confusion
+# Keep only the latest kernel
+dnf remove -y $(rpm -q kernel | head -n -1) || echo "Warning: old kernel removal failed"
+
 # Clean up subscription data - remove all traces of credentials
 subscription-manager unregister || echo "Warning: unregister failed"
 subscription-manager clean || echo "Warning: clean failed"
