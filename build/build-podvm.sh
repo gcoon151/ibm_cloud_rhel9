@@ -226,6 +226,7 @@ build_qcow2() {
     chmod 600 "$dst"
     
     export QCOW2="$dst"
+    export QCOW2_DIR="$(dirname "$dst")"
     
     # Run the build
     log_info "Running example_run.sh..."
@@ -252,26 +253,38 @@ build_qcow2() {
         qemu-img info "$QCOW2" | sed 's/^/  /'
         echo ""
         
-        # Check for Uptycs installation log
+        # Check for Uptycs installation log (run in container where libguestfs is configured)
         log_info "Checking Uptycs installation log..."
-        if virt-cat -a "$QCOW2" /var/log/uptycs-install.log 2>/dev/null; then
+        if podman run --rm --privileged \
+            -v "$QCOW2_DIR:/images:ro" \
+            localhost/coco-podvm:latest \
+            virt-cat -a "/images/$(basename $QCOW2)" /var/log/uptycs-install.log 2>/dev/null; then
             echo ""
             log_info "✓ Uptycs installation log found and displayed above"
         else
             log_warn "Uptycs installation log not found in image"
         fi
         
-        # Check Uptycs installation status using marker files
+        # Check Uptycs installation status using marker files (run in container)
         log_info "Checking Uptycs installation status..."
-        if virt-ls -a "$QCOW2" / 2>/dev/null | grep -q "UPTYCS_INSTALL_SUCCESS"; then
+        if podman run --rm --privileged \
+            -v "$QCOW2_DIR:/images:ro" \
+            localhost/coco-podvm:latest \
+            virt-ls -a "/images/$(basename $QCOW2)" / 2>/dev/null | grep -q "UPTYCS_INSTALL_SUCCESS"; then
             log_info "✓ Uptycs installation completed successfully"
             # Verify binary exists
-            if virt-ls -a "$QCOW2" /usr/bin/ 2>/dev/null | grep -q osqueryd; then
+            if podman run --rm --privileged \
+                -v "$QCOW2_DIR:/images:ro" \
+                localhost/coco-podvm:latest \
+                virt-ls -a "/images/$(basename $QCOW2)" /usr/bin/ 2>/dev/null | grep -q osqueryd; then
                 log_info "✓ Uptycs binary confirmed at /usr/bin/osqueryd"
             else
                 log_warn "WARNING: Install script succeeded but binary not found!"
             fi
-        elif virt-ls -a "$QCOW2" / 2>/dev/null | grep -q "UPTYCS_INSTALL_STARTED"; then
+        elif podman run --rm --privileged \
+            -v "$QCOW2_DIR:/images:ro" \
+            localhost/coco-podvm:latest \
+            virt-ls -a "/images/$(basename $QCOW2)" / 2>/dev/null | grep -q "UPTYCS_INSTALL_STARTED"; then
             log_error "Uptycs installation STARTED but did NOT complete"
             log_error "The install script failed partway through"
         else
