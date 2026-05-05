@@ -4,6 +4,25 @@
 
 set -e
 
+# Load Red Hat subscription credentials from .env file
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
+
+if [ -f "$ENV_FILE" ]; then
+    source "$ENV_FILE"
+    echo "Loaded credentials from $ENV_FILE"
+else
+    echo "ERROR: .env file not found at $ENV_FILE"
+    echo "Please create .env with ORG_ID and ACTIVATION_KEY"
+    exit 1
+fi
+
+if [ -z "$ORG_ID" ] || [ -z "$ACTIVATION_KEY" ]; then
+    echo "ERROR: ORG_ID and ACTIVATION_KEY must be set in .env"
+    exit 1
+fi
+
 ISO_PATH="/home/gcoon/Downloads/rhel-9.7-x86_64-dvd.iso"
 KS_FILE="$(dirname $0)/rhel9-dm-root.ks"
 OLD_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY.qcow2"
@@ -82,6 +101,7 @@ fi
 
 # Create new base image
 # Using exact command from README.md - virt-install will create disk automatically
+# Pass subscription credentials as kernel parameters for kickstart to use
 virt-install \
     --virt-type kvm \
     --os-variant rhel9.0 \
@@ -93,7 +113,7 @@ virt-install \
     --disk bus=scsi,size=3 \
     --initrd-inject="$KS_FILE" \
     --nographics \
-    --extra-args "console=ttyS0 inst.ks=file:/rhel9-dm-root.ks" \
+    --extra-args "console=ttyS0 inst.ks=file:/rhel9-dm-root.ks ORG_ID=$ORG_ID ACTIVATION_KEY=$ACTIVATION_KEY" \
     --transient
 
 echo ""

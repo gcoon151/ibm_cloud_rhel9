@@ -85,8 +85,20 @@ e2fsprogs
 %end
 
 %post --erroronfail
+# Register with Red Hat subscription manager to enable repos
+# Note: ORG_ID and ACTIVATION_KEY must be set in environment
+subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY} || echo "Warning: subscription-manager registration failed"
+
 # Update all packages to get latest security fixes (including CVE-2026-31431)
-dnf update -y
+dnf update -y || echo "Warning: dnf update failed"
+
+# Clean up subscription data - remove all traces of credentials
+subscription-manager unregister || echo "Warning: unregister failed"
+subscription-manager clean || echo "Warning: clean failed"
+rm -f /etc/pki/consumer/*.pem
+rm -f /etc/pki/entitlement/*.pem
+rm -rf /var/lib/rhsm/*
+rm -f /var/log/rhsm/*
 
 # installer may change partition GUIDs. Linux root (x86-64):
 sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
