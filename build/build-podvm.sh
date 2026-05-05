@@ -144,7 +144,6 @@ build_qcow2() {
     if [ -n "$UPTYCS_TARBALL" ]; then
         log_info "Found Uptycs package: $UPTYCS_TARBALL"
         cp "$UPTYCS_TARBALL" scripts/coco/podvm/uptycs-complete.tar.gz
-        ln -sf uptycs-complete.tar.gz scripts/coco/podvm/uptycs-binary.tar.gz
         log_info "✓ Copied to scripts/coco/podvm/ for container build"
         
         # Force container rebuild to pick up new Uptycs files

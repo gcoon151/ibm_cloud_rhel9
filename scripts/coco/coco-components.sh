@@ -84,8 +84,8 @@ EXTRA_ARGS=""
 # Check if Uptycs files exist before adding them to virt-customize
 UPTYCS_COPY_ARGS=""
 UPTYCS_RUN_ARGS=""
-if [ -f "$ARTIFACTS_FOLDER/uptycs-binary.tar.gz" ]; then
-    echo "Found Uptycs binary, will install into image"
+if [ -f "$ARTIFACTS_FOLDER/uptycs-complete.tar.gz" ]; then
+    echo "Found Uptycs package, will install into image"
     # Copy Uptycs files to /tmp/ in the VM image (same pattern as other files)
     UPTYCS_COPY_ARGS="--copy-in $ARTIFACTS_FOLDER/uptycs-complete.tar.gz:/tmp/ "
     
