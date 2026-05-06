@@ -2,7 +2,26 @@
 
 ## High Priority
 
-### 1. URGENT: Investigate commit 26a408e changes that broke agent-protocol-forwarder
+### 1. INVESTIGATE: Can kernel update move back to kickstart now that repos are synced?
+**Question**: Now that build host (192.168.1.196) and orchestration host (Mac) are on the same repo/branch, can we move the kernel update back into the kickstart file?
+
+**Background**:
+- Previously had kernel update in kickstart (lines 101-103 in rhel9-dm-root.ks)
+- Removed it and moved to optional `update-kernel.sh` script
+- Build host was potentially on different branch/repo when kickstart was failing
+- Now both hosts are synchronized on `feature/consolidate-build-system` branch
+
+**Testing Required**:
+- [ ] Verify build host and Mac are on same branch/commit
+- [ ] Test kernel update in kickstart with synchronized repos
+- [ ] If successful, can simplify by removing `update-kernel.sh` and `UPDATE_KERNEL` flag
+- [ ] Document whether repo synchronization was the root cause
+
+**Priority**: Medium - would simplify build process if kernel update can be in kickstart
+
+---
+
+### 2. URGENT: Investigate commit 26a408e changes that broke agent-protocol-forwarder
 **Issue**: Commit 26a408e (May 6, 08:21) broke peer pod boot. The commit message says "Remove kernel removal code" but that's BACKWARDS - the working image (May 5) HAD kernel removal, the broken image (May 6) did NOT.
 
 **Root Cause Analysis Needed**:
