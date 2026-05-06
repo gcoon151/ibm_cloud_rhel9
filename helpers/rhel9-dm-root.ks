@@ -98,22 +98,8 @@ fi
 # Register with Red Hat subscription manager
 subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" || echo "Warning: subscription-manager registration failed"
 
-# Update only kernel packages to get CVE-2026-31431 fix
-# NOTE: Keeping both old and new kernels - new kernel breaks agent-protocol-forwarder
-dnf update -y kernel-uki-virt kernel-uki-virt-addons || echo "Warning: kernel update failed"
-
-# Set NEW kernel as default boot to test CVE fix and identify boot issues
-# Find the new kernel UKI file (most recent)
-NEW_KERNEL=$(ls -t /boot/efi/EFI/Linux/*.efi | head -1)
-if [ -n "$NEW_KERNEL" ]; then
-    echo "Setting default boot to NEW kernel: $(basename $NEW_KERNEL)"
-    # systemd-boot uses /boot/loader/entries/ for boot entries
-    # Set the new kernel as default by updating loader.conf
-    echo "default $(basename $NEW_KERNEL .efi)" > /boot/loader/loader.conf
-    echo "timeout 3" >> /boot/loader/loader.conf
-else
-    echo "Warning: Could not find new kernel to set as default"
-fi
+# NOTE: Kernel update moved to container build process (update-kernel.sh)
+# This keeps the base image stable and allows better control over kernel updates
 
 # Clean up subscription data - remove all traces of credentials
 subscription-manager unregister || echo "Warning: unregister failed"

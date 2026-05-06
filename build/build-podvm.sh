@@ -27,6 +27,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 CMD_SSHD_SERVICE="${SSHD_SERVICE:-}"
 CMD_APPLY_VERITY="${APPLY_VERITY:-}"
 CMD_PODVM_TAG="${PODVM_TAG:-}"
+CMD_UPDATE_KERNEL="${UPDATE_KERNEL:-}"
 
 # Load credentials from .env file if it exists
 if [ -f ~/.env ]; then
@@ -44,6 +45,7 @@ PAYLOAD_TAG="${CMD_PODVM_TAG:-${PODVM_TAG:-candidate}}"  # Command-line > .env >
 PAYLOAD_IMAGE="quay.io/rh-ee-gcoon/podvm_binaries:${PAYLOAD_TAG}"
 SSHD_SERVICE="${CMD_SSHD_SERVICE:-${SSHD_SERVICE:-true}}"  # Command-line > .env > default
 APPLY_VERITY="${CMD_APPLY_VERITY:-${APPLY_VERITY:-false}}"  # Command-line > .env > default
+UPDATE_KERNEL="${CMD_UPDATE_KERNEL:-${UPDATE_KERNEL:-false}}"  # Command-line > .env > default
 
 # Validate required credentials
 if [ -z "$ORG_ID" ] || [ -z "$ACTIVATION_KEY" ]; then
@@ -175,6 +177,7 @@ build_qcow2() {
     export PODVM_BINARY="$PAYLOAD_IMAGE"
     export SSHD_SERVICE
     export APPLY_VERITY
+    export UPDATE_KERNEL
     
     # NOTE: Custom Secure Boot signing is DISABLED for IBM Cloud TDX
     # Reasons:
@@ -192,6 +195,7 @@ build_qcow2() {
     echo "  PODVM_BINARY: $PODVM_BINARY"
     echo "  SSHD_SERVICE: $SSHD_SERVICE"
     echo "  APPLY_VERITY: $APPLY_VERITY"
+    echo "  UPDATE_KERNEL: $UPDATE_KERNEL"
     echo "  Secure Boot: Using Red Hat default keys (no custom signing)"
     if [ "$APPLY_VERITY" = "true" ]; then
         echo "  dm-verity: Enabled (partition created at build time)"

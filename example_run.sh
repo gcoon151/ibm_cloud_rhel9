@@ -22,6 +22,7 @@ sudo podman build -t coco-podvm \
 [[ -n "$APPLY_VERITY" ]] && run_extras+=" -e APPLY_VERITY=$APPLY_VERITY "
 [[ -n "$PODVM_BINARY" ]] && run_extras+=" -e PODVM_BINARY=$PODVM_BINARY "
 [[ -n "$PAUSE_BUNDLE" ]] && run_extras+=" -e PAUSE_BUNDLE=$PAUSE_BUNDLE "
+[[ -n "$UPDATE_KERNEL" ]] && run_extras+=" -e UPDATE_KERNEL=$UPDATE_KERNEL -e ORG_ID=$ORG_ID -e ACTIVATION_KEY=$ACTIVATION_KEY "
 
 sudo podman run --rm \
     --privileged \

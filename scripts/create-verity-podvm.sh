@@ -144,6 +144,19 @@ trap handle_ctrlc EXIT
 
 get_input_img_format $INPUT_IMAGE
 
+# Update kernel to get CVE-2026-31431 fix (if enabled)
+if [ "${UPDATE_KERNEL:-false}" = "true" ]; then
+    echo "Updating kernel in base image..."
+    if [ -z "$ORG_ID" ] || [ -z "$ACTIVATION_KEY" ]; then
+        echo "ERROR: UPDATE_KERNEL=true but ORG_ID and ACTIVATION_KEY not set"
+        exit 1
+    fi
+    export ORG_ID
+    export ACTIVATION_KEY
+    "$SCRIPT_FOLDER/update-kernel.sh" "$INPUT_IMAGE"
+    echo ""
+fi
+
 echo "Applying CoCo guest components..."
 export PODVM_BINARY
 export PODVM_BINARY_LOCATION
