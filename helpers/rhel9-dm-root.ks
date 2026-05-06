@@ -99,8 +99,21 @@ fi
 subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" || echo "Warning: subscription-manager registration failed"
 
 # Update only kernel packages to get CVE-2026-31431 fix
-# NOTE: Keeping both old and new kernels - removal breaks agent-protocol-forwarder
+# NOTE: Keeping both old and new kernels - new kernel breaks agent-protocol-forwarder
 dnf update -y kernel-uki-virt kernel-uki-virt-addons || echo "Warning: kernel update failed"
+
+# Set old kernel as default boot (new kernel breaks agent-protocol-forwarder)
+# Find the old kernel UKI file
+OLD_KERNEL=$(ls -t /boot/efi/EFI/Linux/*.efi | tail -1)
+if [ -n "$OLD_KERNEL" ]; then
+    echo "Setting default boot to old kernel: $(basename $OLD_KERNEL)"
+    # systemd-boot uses /boot/loader/entries/ for boot entries
+    # Set the old kernel as default by updating loader.conf
+    echo "default $(basename $OLD_KERNEL .efi)" > /boot/loader/loader.conf
+    echo "timeout 3" >> /boot/loader/loader.conf
+else
+    echo "Warning: Could not find old kernel to set as default"
+fi
 
 # Clean up subscription data - remove all traces of credentials
 subscription-manager unregister || echo "Warning: unregister failed"
