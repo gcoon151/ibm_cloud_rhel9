@@ -2,27 +2,66 @@
 
 ## High Priority
 
-### 1. Implement safe kernel removal
-**Issue**: Removing old kernel breaks `agent-protocol-forwarder` service, preventing peer pods from starting.
+### 1. URGENT: Investigate commit 26a408e changes that broke agent-protocol-forwarder
+**Issue**: Commit 26a408e (May 6, 08:21) broke peer pod boot. The commit message says "Remove kernel removal code" but that's BACKWARDS - the working image (May 5) HAD kernel removal, the broken image (May 6) did NOT.
+
+**Root Cause Analysis Needed**:
+Commit 26a408e made these changes to `helpers/rhel9-dm-root.ks`:
+
+1. **REMOVED kernel removal code** (lines 104-110):
+   ```bash
+   OLD_KERNELS=$(rpm -q kernel-uki-virt | head -n -1)
+   if [ -n "$OLD_KERNELS" ]; then
+       OLD_VERSION=$(echo $OLD_KERNELS | sed 's/kernel-uki-virt-//')
+       dnf remove -y kernel-uki-virt-$OLD_VERSION kernel-modules-core-$OLD_VERSION
+   fi
+   ```
+
+2. **ADDED extra log cleanup**:
+   ```bash
+   rm -f /var/log/rhsm/*
+   ```
+
+3. **ADDED partition GUID fix**:
+   ```bash
+   sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
+   ```
+
+4. **ADDED UKI install speedup**:
+   ```bash
+   touch /etc/kernel/install.d/20-grub.install
+   touch /etc/kernel/install.d/50-dracut.install
+   ```
+
+**Testing Required**:
+- [ ] Revert commit 26a408e completely (restore kernel removal)
+- [ ] Test if image works
+- [ ] If it works, add back changes ONE AT A TIME:
+  - [ ] Test with just `rm -f /var/log/rhsm/*`
+  - [ ] Test with just `sfdisk --part-type` change
+  - [ ] Test with just `touch /etc/kernel/install.d/*` changes
+- [ ] Identify which specific change breaks agent-protocol-forwarder
+
+**Current Status**:
+- Reverted to working base image (May 5) on remote host
+- Ready to rebuild and test
+- Need to systematically test each change
+
+**Priority**: CRITICAL - blocking all new builds
+
+---
+
+### 2. Implement safe kernel removal (DEPRIORITIZED - see item 1)
+**Issue**: Need to understand if kernel removal actually breaks things or if it was another change in commit 26a408e.
 
 **Current state**:
 - Kickstart updates kernel to fix CVE-2026-31431
-- Both old and new kernels are kept in the image
-- Kernel removal code disabled in both kickstart and coco-components.sh
+- Working image (May 5) HAD kernel removal and worked fine
+- Broken image (May 6) did NOT have kernel removal but was broken
 
-**Root cause**: Kernel removal (via `dnf remove`) breaks dependencies or removes kernel modules needed by agent-protocol-forwarder
+**This suggests kernel removal is NOT the problem!**
 
-**Desired solution**:
-- Investigate exact dependency that breaks
-- Either fix the dependency issue OR
-- Accept having both kernels (adds ~200MB to image)
-- Test thoroughly before re-enabling removal
-
-**Files affected**:
-- `helpers/rhel9-dm-root.ks` (lines 101-103)
-- `scripts/coco/coco-components.sh` (lines 124-139, now commented out)
-
-**Priority**: High - needed to reduce image size, but must not break functionality
+**Priority**: Medium - blocked by item 1
 
 ---
 
