@@ -2,7 +2,31 @@
 
 ## High Priority
 
-### 1. Improve Uptycs tarball handling
+### 1. Implement safe kernel removal
+**Issue**: Removing old kernel breaks `agent-protocol-forwarder` service, preventing peer pods from starting.
+
+**Current state**:
+- Kickstart updates kernel to fix CVE-2026-31431
+- Both old and new kernels are kept in the image
+- Kernel removal code disabled in both kickstart and coco-components.sh
+
+**Root cause**: Kernel removal (via `dnf remove`) breaks dependencies or removes kernel modules needed by agent-protocol-forwarder
+
+**Desired solution**:
+- Investigate exact dependency that breaks
+- Either fix the dependency issue OR
+- Accept having both kernels (adds ~200MB to image)
+- Test thoroughly before re-enabling removal
+
+**Files affected**:
+- `helpers/rhel9-dm-root.ks` (lines 101-103)
+- `scripts/coco/coco-components.sh` (lines 124-139, now commented out)
+
+**Priority**: High - needed to reduce image size, but must not break functionality
+
+---
+
+### 2. Improve Uptycs tarball handling
 **Issue**: Uptycs tarballs (`scripts/coco/podvm/uptycs-*.tar.gz`) are currently NOT in `.gitignore` to allow container builds to work. This means large binary files (19MB) could be committed to git.
 
 **Current workaround**: Removed from `.gitignore` temporarily

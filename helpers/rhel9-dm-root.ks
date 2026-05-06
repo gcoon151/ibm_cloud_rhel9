@@ -98,17 +98,9 @@ fi
 # Register with Red Hat subscription manager
 subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" || echo "Warning: subscription-manager registration failed"
 
-# Update only kernel packages to get CVE fix
+# Update only kernel packages to get CVE-2026-31431 fix
+# NOTE: Keeping both old and new kernels - removal breaks agent-protocol-forwarder
 dnf update -y kernel-uki-virt kernel-uki-virt-addons || echo "Warning: kernel update failed"
-
-# Remove old kernel and its modules (keep only the latest)
-OLD_KERNELS=$(rpm -q kernel-uki-virt | head -n -1)
-if [ -n "$OLD_KERNELS" ] && [ "$OLD_KERNELS" != "package kernel-uki-virt is not installed" ]; then
-    # Extract version from old kernel package name
-    OLD_VERSION=$(echo $OLD_KERNELS | sed 's/kernel-uki-virt-//')
-    # Remove old kernel and its modules-core package
-    dnf remove -y kernel-uki-virt-$OLD_VERSION kernel-modules-core-$OLD_VERSION || echo "Warning: old kernel removal failed"
-fi
 
 # Clean up subscription data - remove all traces of credentials
 subscription-manager unregister || echo "Warning: unregister failed"
