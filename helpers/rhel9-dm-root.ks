@@ -102,17 +102,17 @@ subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" 
 # NOTE: Keeping both old and new kernels - new kernel breaks agent-protocol-forwarder
 dnf update -y kernel-uki-virt kernel-uki-virt-addons || echo "Warning: kernel update failed"
 
-# Set old kernel as default boot (new kernel breaks agent-protocol-forwarder)
-# Find the old kernel UKI file
-OLD_KERNEL=$(ls -t /boot/efi/EFI/Linux/*.efi | tail -1)
-if [ -n "$OLD_KERNEL" ]; then
-    echo "Setting default boot to old kernel: $(basename $OLD_KERNEL)"
+# Set NEW kernel as default boot to test CVE fix and identify boot issues
+# Find the new kernel UKI file (most recent)
+NEW_KERNEL=$(ls -t /boot/efi/EFI/Linux/*.efi | head -1)
+if [ -n "$NEW_KERNEL" ]; then
+    echo "Setting default boot to NEW kernel: $(basename $NEW_KERNEL)"
     # systemd-boot uses /boot/loader/entries/ for boot entries
-    # Set the old kernel as default by updating loader.conf
-    echo "default $(basename $OLD_KERNEL .efi)" > /boot/loader/loader.conf
+    # Set the new kernel as default by updating loader.conf
+    echo "default $(basename $NEW_KERNEL .efi)" > /boot/loader/loader.conf
     echo "timeout 3" >> /boot/loader/loader.conf
 else
-    echo "Warning: Could not find old kernel to set as default"
+    echo "Warning: Could not find new kernel to set as default"
 fi
 
 # Clean up subscription data - remove all traces of credentials
