@@ -136,13 +136,105 @@ echo "Created: $(stat -c %y $CREATED_IMAGE | cut -d. -f1)"
 
 echo ""
 echo "=========================================="
-echo "SUCCESS: Base image rebuilt"
+echo "Step 4: Extract and analyze build logs"
+echo "=========================================="
+echo ""
+
+LOG_DIR="$REPO_ROOT/logs"
+mkdir -p "$LOG_DIR"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+LOG_FILE="$LOG_DIR/base-image-build-$TIMESTAMP.log"
+
+echo "Extracting kickstart logs..."
+echo "=== Kickstart Script Logs ===" > "$LOG_FILE"
+for logfile in $(podman run --rm -v ${IMAGE_DIR}:/images:ro localhost/coco-podvm:latest virt-ls -a /images/$(basename $CREATED_IMAGE) /var/log/anaconda/ 2>/dev/null | grep ks-script); do
+    echo "" >> "$LOG_FILE"
+    echo "--- $logfile ---" >> "$LOG_FILE"
+    podman run --rm -v ${IMAGE_DIR}:/images:ro localhost/coco-podvm:latest virt-cat -a /images/$(basename $CREATED_IMAGE) /var/log/anaconda/$logfile >> "$LOG_FILE" 2>&1
+done
+
+echo "Checking for errors..."
+if grep -iE "error|failed|warning" "$LOG_FILE" | grep -v "Warning: /boot/grub2/grubenv" > "$LOG_FILE.errors"; then
+    echo "⚠️  Found errors/warnings:"
+    head -20 "$LOG_FILE.errors"
+else
+    echo "✓ No critical errors found"
+fi
+
+echo ""
+echo "Checking installed kernels..."
+KERNELS=$(podman run --rm -v ${IMAGE_DIR}:/images:ro localhost/coco-podvm:latest virt-ls -a /images/$(basename $CREATED_IMAGE) /boot/efi/EFI/Linux/ 2>&1 | grep -v '^\.')
+KERNEL_COUNT=$(echo "$KERNELS" | wc -l)
+echo "Found $KERNEL_COUNT kernel(s):"
+echo "$KERNELS"
+
+echo ""
+echo "Build logs: $LOG_FILE"
+
+echo ""
+echo "=========================================="
+echo "Step 5: Boot test validation"
+echo "=========================================="
+echo ""
+
+BOOT_LOG="$LOG_DIR/boot-test-$TIMESTAMP.log"
+VM_TEST_NAME="test-base-$$"
+
+cat > /tmp/test-vm-$$.xml <<EOF
+<domain type='kvm'>
+  <name>$VM_TEST_NAME</name>
+  <memory unit='GiB'>2</memory>
+  <vcpu>2</vcpu>
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <devices>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='$CREATED_IMAGE'/>
+      <target dev='vda' bus='virtio'/>
+      <readonly/>
+    </disk>
+    <serial type='pty'><target port='0'/></serial>
+    <console type='pty'><target type='serial' port='0'/></console>
+  </devices>
+</domain>
+EOF
+
+echo "Starting VM for 30-second boot test..."
+virsh --connect qemu:///session create /tmp/test-vm-$$.xml > "$BOOT_LOG" 2>&1
+sleep 30
+
+if virsh --connect qemu:///session list 2>/dev/null | grep -q $VM_TEST_NAME; then
+    echo "✓ VM booted successfully"
+    BOOT_SUCCESS=true
+    virsh --connect qemu:///session destroy $VM_TEST_NAME >> "$BOOT_LOG" 2>&1
+else
+    echo "✗ VM failed to boot or crashed"
+    BOOT_SUCCESS=false
+fi
+
+rm -f /tmp/test-vm-$$.xml
+echo "Boot test log: $BOOT_LOG"
+
+echo ""
+echo "=========================================="
+echo "Build Complete"
 echo "=========================================="
 echo ""
 echo "Image: $CREATED_IMAGE"
 echo "Backup: $BACKUP_IMAGE"
+echo "Logs: $LOG_FILE"
+echo "Boot test: $BOOT_LOG"
 echo ""
-echo "The image is ready to use for PodVM builds."
+
+if [ "$BOOT_SUCCESS" = "true" ]; then
+    echo "✓ Image validated and ready for PodVM builds"
+else
+    echo "⚠️  WARNING: Boot test failed - review logs before using"
+    exit 1
+fi
 echo ""
 
 # Made with Bob
