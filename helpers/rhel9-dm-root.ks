@@ -85,6 +85,30 @@ e2fsprogs
 %end
 
 %post --erroronfail
+# Parse ORG_ID and ACTIVATION_KEY from kernel command line
+ORG_ID=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ORG_ID=' | cut -d= -f2)
+ACTIVATION_KEY=$(cat /proc/cmdline | tr ' ' '\n' | grep '^ACTIVATION_KEY=' | cut -d= -f2)
+
+if [ -z "$ORG_ID" ] || [ -z "$ACTIVATION_KEY" ]; then
+    echo "ERROR: ORG_ID and ACTIVATION_KEY not found in kernel command line"
+    echo "Kernel cmdline: $(cat /proc/cmdline)"
+    exit 1
+fi
+
+# Register with Red Hat subscription manager
+subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" || echo "Warning: subscription-manager registration failed"
+
+# NOTE: Kernel update moved to container build process (update-kernel.sh)
+# This keeps the base image stable and allows better control over kernel updates
+
+# Clean up subscription data - remove all traces of credentials
+subscription-manager unregister || echo "Warning: unregister failed"
+subscription-manager clean || echo "Warning: clean failed"
+rm -f /etc/pki/consumer/*.pem
+rm -f /etc/pki/entitlement/*.pem
+rm -rf /var/lib/rhsm/*
+rm -f /var/log/rhsm/*
+
 # installer may change partition GUIDs. Linux root (x86-64):
 sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 
