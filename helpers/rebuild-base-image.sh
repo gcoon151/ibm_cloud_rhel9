@@ -29,7 +29,6 @@ OLD_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY.qcow2"
 BACKUP_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY-BACKUP-$(date +%Y%m%d).qcow2"
 VM_NAME="rhel97-ks-READONLY"
 IMAGE_DIR="/home/gcoon/.local/share/libvirt/images"
-CREATED_IMAGE="${IMAGE_DIR}/${VM_NAME}.qcow2"
 
 echo "=========================================="
 echo "Base Image Rebuild Script"
@@ -117,19 +116,23 @@ virt-install \
 
 echo ""
 echo "=========================================="
-echo "Step 3: Verify image was created"
+echo "Step 3: Find and verify created image"
 echo "=========================================="
 echo ""
 
-if [ ! -f "$CREATED_IMAGE" ]; then
-    echo "ERROR: Image not found at $CREATED_IMAGE"
+# Find the newest image matching our VM name (virt-install may add -1, -2, etc suffix)
+CREATED_IMAGE=$(ls -t ${IMAGE_DIR}/${VM_NAME}*.qcow2 2>/dev/null | head -1)
+
+if [ -z "$CREATED_IMAGE" ] || [ ! -f "$CREATED_IMAGE" ]; then
+    echo "ERROR: No image found matching ${VM_NAME}*.qcow2"
     echo "Looking for images..."
     ls -lh ${IMAGE_DIR}/${VM_NAME}*.qcow2 2>/dev/null || echo "No images found"
     exit 1
 fi
 
-echo "Image created: $CREATED_IMAGE"
+echo "Found created image: $CREATED_IMAGE"
 echo "Size: $(du -h $CREATED_IMAGE | cut -f1)"
+echo "Created: $(stat -c %y $CREATED_IMAGE | cut -d. -f1)"
 
 echo ""
 echo "=========================================="
