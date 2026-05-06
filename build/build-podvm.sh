@@ -222,6 +222,7 @@ build_qcow2() {
     done
     
     log_info "Creating: $dst"
+    rm -f "$dst"  # Remove if exists (may have mode 600 from previous run)
     cp "$src" "$dst"
     chmod 600 "$dst"
     
