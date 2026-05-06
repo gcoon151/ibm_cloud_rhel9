@@ -62,12 +62,7 @@ else
 fi
 
 echo ""
-read -p "Continue with base image rebuild? (yes/no): " CONFIRM
-if [ "$CONFIRM" != "yes" ]; then
-    echo "Aborted by user"
-    exit 0
-fi
-
+echo "Starting base image rebuild..."
 echo ""
 echo "=========================================="
 echo "Step 1: Backup existing image"
