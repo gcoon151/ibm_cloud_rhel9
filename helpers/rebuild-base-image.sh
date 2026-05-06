@@ -26,13 +26,10 @@ fi
 ISO_PATH="/home/gcoon/Downloads/rhel-9.7-x86_64-dvd.iso"
 KS_FILE="$(dirname $0)/rhel9-dm-root.ks"
 OLD_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY.qcow2"
-NEW_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY-NEW.qcow2"
 BACKUP_IMAGE="/home/gcoon/.local/share/libvirt/images/rhel97-ks-READONLY-BACKUP-$(date +%Y%m%d).qcow2"
-VM_NAME="rhel97-ks-NEW"
+VM_NAME="rhel97-ks-READONLY"
 IMAGE_DIR="/home/gcoon/.local/share/libvirt/images"
-# virt-install can create disk as either <vm-name>.qcow2 or <vm-name>-1.qcow2
-CREATED_IMAGE_1="${IMAGE_DIR}/${VM_NAME}.qcow2"
-CREATED_IMAGE_2="${IMAGE_DIR}/${VM_NAME}-1.qcow2"
+CREATED_IMAGE="${IMAGE_DIR}/${VM_NAME}.qcow2"
 
 echo "=========================================="
 echo "Base Image Rebuild Script"
@@ -40,8 +37,8 @@ echo "=========================================="
 echo ""
 echo "This script will:"
 echo "  1. Backup existing image to: $(basename $BACKUP_IMAGE)"
-echo "  2. Create new image at: $(basename $NEW_IMAGE)"
-echo "  3. NOT replace the old image automatically"
+echo "  2. Rebuild image at: $(basename $OLD_IMAGE)"
+echo "  3. Use --transient so VM is destroyed after install"
 echo ""
 echo "ISO: $ISO_PATH"
 echo "Kickstart: $KS_FILE"
@@ -98,11 +95,8 @@ echo "This will take 10-15 minutes..."
 echo "The VM will install RHEL 9.7 with latest packages"
 echo ""
 
-# Remove any existing NEW image
-if [ -f "$NEW_IMAGE" ]; then
-    echo "Removing previous NEW image..."
-    rm -f "$NEW_IMAGE"
-fi
+# virt-install will create the image automatically
+# Using --transient means VM is destroyed after install completes
 
 # Create new base image
 # Using exact command from README.md - virt-install will create disk automatically
@@ -123,70 +117,29 @@ virt-install \
 
 echo ""
 echo "=========================================="
-echo "Step 3: Rename and verify new image"
+echo "Step 3: Verify image was created"
 echo "=========================================="
 echo ""
 
-# virt-install can create the image with or without -1 suffix, find it
-CREATED_IMAGE=""
-if [ -f "$CREATED_IMAGE_1" ]; then
-    CREATED_IMAGE="$CREATED_IMAGE_1"
-elif [ -f "$CREATED_IMAGE_2" ]; then
-    CREATED_IMAGE="$CREATED_IMAGE_2"
-else
-    echo "ERROR: Created image not found"
+if [ ! -f "$CREATED_IMAGE" ]; then
+    echo "ERROR: Image not found at $CREATED_IMAGE"
     echo "Looking for images..."
     ls -lh ${IMAGE_DIR}/${VM_NAME}*.qcow2 2>/dev/null || echo "No images found"
     exit 1
 fi
 
-echo "Found created image: $CREATED_IMAGE"
-if [ "$CREATED_IMAGE" != "$NEW_IMAGE" ]; then
-    echo "Renaming to: $NEW_IMAGE"
-    mv "$CREATED_IMAGE" "$NEW_IMAGE"
-else
-    echo "Image already has correct name"
-fi
-
-if [ ! -f "$NEW_IMAGE" ]; then
-    echo "ERROR: Failed to rename image!"
-    exit 1
-fi
-
-echo "New image created: $NEW_IMAGE"
-echo "Size: $(du -h $NEW_IMAGE | cut -f1)"
-echo ""
-
-# Check kernel version in new image
-echo "Checking kernel version in new image..."
-KERNEL_VERSION=$(virt-cat -a "$NEW_IMAGE" /etc/os-release | grep VERSION_ID | cut -d'"' -f2)
-echo "RHEL Version: $KERNEL_VERSION"
+echo "Image created: $CREATED_IMAGE"
+echo "Size: $(du -h $CREATED_IMAGE | cut -f1)"
 
 echo ""
 echo "=========================================="
-echo "SUCCESS: New base image created"
+echo "SUCCESS: Base image rebuilt"
 echo "=========================================="
 echo ""
-echo "Next steps:"
+echo "Image: $CREATED_IMAGE"
+echo "Backup: $BACKUP_IMAGE"
 echo ""
-echo "1. Test the new image:"
-echo "   cd ~/gits/ibm_cloud_rhel9"
-echo "   # Temporarily use NEW image for testing"
-echo "   cp $NEW_IMAGE $OLD_IMAGE.test"
-echo "   # Run a test build"
-echo ""
-echo "2. If test succeeds, replace the old image:"
-echo "   mv $OLD_IMAGE $OLD_IMAGE.old"
-echo "   mv $NEW_IMAGE $OLD_IMAGE"
-echo ""
-echo "3. If test fails, revert:"
-echo "   # Old image is still at: $OLD_IMAGE"
-echo "   # Backup is at: $BACKUP_IMAGE"
-echo ""
-echo "Files:"
-echo "  OLD (current): $OLD_IMAGE"
-echo "  NEW (created): $NEW_IMAGE"
-echo "  BACKUP: $BACKUP_IMAGE"
+echo "The image is ready to use for PodVM builds."
 echo ""
 
 # Made with Bob
