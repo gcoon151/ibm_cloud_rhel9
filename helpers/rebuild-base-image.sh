@@ -109,6 +109,27 @@ virt-install \
     --extra-args "console=ttyS0 inst.ks=file:/rhel9-dm-root.ks ORG_ID=$ORG_ID ACTIVATION_KEY=$ACTIVATION_KEY" \
     --transient
 
+# Wait for installation to complete (VM will be destroyed when done)
+echo ""
+echo "Waiting for installation to complete..."
+echo "Started at: $(date '+%H:%M:%S')"
+WAIT_COUNT=0
+MAX_WAIT=900  # 15 minutes max
+while virsh --connect qemu:///session list 2>/dev/null | grep -q "$VM_NAME"; do
+    sleep 10
+    WAIT_COUNT=$((WAIT_COUNT + 10))
+    if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
+        echo "ERROR: Installation timeout after $MAX_WAIT seconds"
+        virsh --connect qemu:///session destroy "$VM_NAME" 2>/dev/null || true
+        exit 1
+    fi
+    if [ $((WAIT_COUNT % 60)) -eq 0 ]; then
+        echo "  Still installing... ($((WAIT_COUNT / 60)) minutes elapsed)"
+    fi
+done
+echo "Installation completed at: $(date '+%H:%M:%S')"
+echo "Total time: $((WAIT_COUNT / 60)) minutes $((WAIT_COUNT % 60)) seconds"
+
 echo ""
 echo "=========================================="
 echo "Step 3: Find and verify created image"
