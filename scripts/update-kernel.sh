@@ -25,12 +25,25 @@ if [ -z "$ORG_ID" ] || [ -z "$ACTIVATION_KEY" ]; then
     exit 1
 fi
 
-echo "[1/5] Registering with Red Hat subscription manager..."
+echo "[1/6] Registering with Red Hat subscription manager..."
 virt-customize -a "$IMAGE" \
     --run-command "subscription-manager register --org='$ORG_ID' --activationkey='$ACTIVATION_KEY' || echo 'Warning: registration failed'"
 
 echo ""
-echo "[2/5] Listing kernels BEFORE update..."
+echo "[2/6] Enabling required repositories..."
+virt-customize -a "$IMAGE" \
+    --run-command "
+set -x
+echo '=== Enabling repositories ==='
+subscription-manager repos --enable rhel-9-for-x86_64-baseos-rpms
+subscription-manager repos --enable rhel-9-for-x86_64-appstream-rpms
+echo '=== Listing enabled repositories ==='
+subscription-manager repos --list-enabled
+set +x
+"
+
+echo ""
+echo "[3/6] Listing kernels BEFORE update..."
 virt-customize -a "$IMAGE" \
     --run-command "
 echo '=== Kernels BEFORE update ==='
@@ -40,7 +53,7 @@ ls -lh /boot/efi/EFI/Linux/*.efi 2>/dev/null || echo 'No UKI files found'
 "
 
 echo ""
-echo "[3/5] Updating kernel packages..."
+echo "[4/6] Updating kernel packages..."
 virt-customize -a "$IMAGE" \
     --run-command "
 set -x
@@ -51,7 +64,7 @@ set +x
 "
 
 echo ""
-echo "[4/5] Listing kernels AFTER update..."
+echo "[5/6] Listing kernels AFTER update..."
 virt-customize -a "$IMAGE" \
     --run-command "
 echo '=== Kernels AFTER update ==='
@@ -62,7 +75,7 @@ ls -lht /boot/efi/EFI/Linux/*.efi
 "
 
 echo ""
-echo "[5/5] Removing OLD kernel and setting NEW as default..."
+echo "[6/6] Removing OLD kernel and setting NEW as default..."
 virt-customize -a "$IMAGE" \
     --run-command "
 set -x
@@ -96,7 +109,7 @@ set +x
 "
 
 echo ""
-echo "[6/7] Verifying final kernel configuration..."
+echo "[7/7] Verifying final kernel configuration..."
 virt-customize -a "$IMAGE" \
     --run-command "
 echo '=== FINAL kernel state ==='
@@ -110,7 +123,7 @@ cat /boot/loader/loader.conf
 "
 
 echo ""
-echo "[7/7] Cleaning up subscription data..."
+echo "[8/8] Cleaning up subscription data..."
 virt-customize -a "$IMAGE" \
     --run-command "subscription-manager unregister || echo 'Warning: unregister failed'" \
     --run-command "subscription-manager clean || echo 'Warning: clean failed'" \
