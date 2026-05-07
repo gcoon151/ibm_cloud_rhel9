@@ -193,7 +193,92 @@ echo "Build logs: $LOG_FILE"
 
 echo ""
 echo "=========================================="
-echo "Step 5: Boot test validation"
+echo "Step 4.5: Clean up orphaned kernel artifacts"
+echo "=========================================="
+echo ""
+
+# If kickstart updated kernel, there may be orphaned files from old kernel
+# Clean them up using virt-customize
+if [ "$KERNEL_COUNT" -gt 1 ]; then
+    echo "⚠️  Multiple kernel files detected - cleaning up orphaned artifacts..."
+    
+    # Find the newest .efi file (the one we want to keep)
+    NEWEST_EFI=$(echo "$KERNELS" | grep '\.efi$' | sort -V | tail -1)
+    echo "Keeping: $NEWEST_EFI"
+    
+    # Remove all other .efi files and .extra.d directories
+    echo "Removing orphaned kernel artifacts..."
+    for file in $(echo "$KERNELS" | grep -v "^$NEWEST_EFI$"); do
+        echo "  Removing: $file"
+        if [[ "$file" == *.efi ]]; then
+            podman run --rm --privileged \
+                -v "$CREATED_IMAGE:/disk.qcow2" \
+                -v /lib/modules:/lib/modules:ro \
+                -v /boot:/boot:ro \
+                localhost/coco-podvm:latest \
+                virt-customize -a /disk.qcow2 \
+                    --run-command "rm -f /boot/efi/EFI/Linux/$file" \
+                    --selinux-relabel
+        elif [[ "$file" == *.extra.d ]]; then
+            podman run --rm --privileged \
+                -v "$CREATED_IMAGE:/disk.qcow2" \
+                -v /lib/modules:/lib/modules:ro \
+                -v /boot:/boot:ro \
+                localhost/coco-podvm:latest \
+                virt-customize -a /disk.qcow2 \
+                    --run-command "rm -rf /boot/efi/EFI/Linux/$file" \
+                    --selinux-relabel
+        fi
+    done
+    
+    # Verify cleanup
+    echo ""
+    echo "Verifying cleanup..."
+    KERNELS_AFTER=$(podman run --rm -v ${IMAGE_DIR}:/images:ro localhost/coco-podvm:latest virt-ls -a /images/$(basename $CREATED_IMAGE) /boot/efi/EFI/Linux/ 2>&1 | grep -v '^\.')
+    KERNEL_COUNT_AFTER=$(echo "$KERNELS_AFTER" | grep -c '\.efi$' || echo "0")
+    echo "Kernel files after cleanup: $KERNEL_COUNT_AFTER"
+    echo "$KERNELS_AFTER"
+    
+    if [ "$KERNEL_COUNT_AFTER" -eq 1 ]; then
+        echo "✓ Cleanup successful - exactly 1 kernel file remains"
+    else
+        echo "⚠️  WARNING: Expected 1 kernel file, found $KERNEL_COUNT_AFTER"
+    fi
+else
+    echo "✓ Only 1 kernel file found - no cleanup needed"
+fi
+
+echo ""
+echo "=========================================="
+echo "Step 5: Internal validation with pesign"
+echo "=========================================="
+echo ""
+
+# Run the internal validation script that uses pesign from inside the image
+VALIDATION_SCRIPT="$REPO_ROOT/helpers/validate-boot-health-internal.sh"
+if [ -f "$VALIDATION_SCRIPT" ]; then
+    echo "Running internal validation (uses pesign from image)..."
+    if podman run --rm --privileged \
+        -v "$CREATED_IMAGE:/disk.qcow2" \
+        -v "$VALIDATION_SCRIPT:/validation.sh:ro" \
+        -v /lib/modules:/lib/modules:ro \
+        -v /boot:/boot:ro \
+        localhost/coco-podvm:latest \
+        virt-customize -a /disk.qcow2 \
+            --copy-in /validation.sh:/tmp \
+            --run-command "chmod +x /tmp/validation.sh && /tmp/validation.sh" \
+            --selinux-relabel 2>&1 | tee "$LOG_DIR/validation-$TIMESTAMP.log"; then
+        echo "✓ Internal validation passed"
+    else
+        echo "⚠️  Internal validation failed - check logs"
+    fi
+else
+    echo "ℹ  Validation script not found, skipping internal validation"
+fi
+
+echo ""
+echo "=========================================="
+echo "Step 6: Boot test validation"
 echo "=========================================="
 echo ""
 
