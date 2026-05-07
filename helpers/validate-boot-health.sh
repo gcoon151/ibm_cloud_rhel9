@@ -74,7 +74,61 @@ echo "$SHIM_FILES" | sed "s/^/  /"
 echo "$SHIM_FILES" | grep -q "shim" && echo "✓ PASS: Shim bootloader present" || echo "⚠ WARN: Shim not found"
 echo ""
 
-echo "[10/10] Checking kickstart validation..."
+echo "[10/12] CRITICAL: Validating BOOTX64.CSV integrity..."
+echo "This file tells UEFI firmware which kernel to boot"
+
+# Check if BOOTX64.CSV exists
+if ! virt-ls -a /disk.qcow2 /boot/efi/EFI/redhat/ 2>/dev/null | grep -q "^BOOTX64.CSV$"; then
+    echo "✗ FAIL: BOOTX64.CSV not found!"
+    echo "  Boot will fail - no fallback boot entry configured"
+    exit 1
+fi
+echo "  ✓ BOOTX64.CSV exists"
+
+# Extract and decode BOOTX64.CSV content (UCS-2 to ASCII)
+BOOTCSV_CONTENT=$(virt-cat -a /disk.qcow2 /boot/efi/EFI/redhat/BOOTX64.CSV | iconv -f UCS-2 -t ASCII 2>/dev/null || echo "DECODE_FAILED")
+
+if [ "$BOOTCSV_CONTENT" = "DECODE_FAILED" ]; then
+    echo "✗ FAIL: Could not decode BOOTX64.CSV (corrupted?)"
+    exit 1
+fi
+
+echo "  BOOTX64.CSV content:"
+echo "    $BOOTCSV_CONTENT"
+
+# Extract the .efi filename from BOOTX64.CSV
+# Format: shimx64.efi,redhat,\EFI\Linux\<machine-id>-<kernel-version>.x86_64.efi ,UKI bootentry
+EFI_FILENAME=$(echo "$BOOTCSV_CONTENT" | sed -n 's/.*\\EFI\\Linux\\\([^,]*\).*/\1/p')
+
+if [ -z "$EFI_FILENAME" ]; then
+    echo "✗ FAIL: Could not extract .efi filename from BOOTX64.CSV"
+    exit 1
+fi
+echo "  ✓ Extracted filename: $EFI_FILENAME"
+
+# Check for concatenated kernel versions (the bug we fixed)
+if echo "$EFI_FILENAME" | grep -q "el9_7.*el9_7"; then
+    echo "✗ FAIL: BOOTX64.CSV contains CONCATENATED kernel versions!"
+    echo "  This is the bug that causes boot failure"
+    echo "  Filename: $EFI_FILENAME"
+    exit 1
+fi
+echo "  ✓ No concatenated kernel versions detected"
+
+# Verify the referenced .efi file actually exists
+if ! virt-ls -a /disk.qcow2 /boot/efi/EFI/Linux/ 2>/dev/null | grep -q "^$EFI_FILENAME$"; then
+    echo "✗ FAIL: UKI file referenced in BOOTX64.CSV does not exist!"
+    echo "  Expected: /boot/efi/EFI/Linux/$EFI_FILENAME"
+    echo "  Available files:"
+    virt-ls -a /disk.qcow2 /boot/efi/EFI/Linux/ | sed 's/^/    /'
+    exit 1
+fi
+echo "  ✓ Referenced UKI file exists: $EFI_FILENAME"
+
+echo "✓ PASS: BOOTX64.CSV is valid and will boot correctly"
+echo ""
+
+echo "[11/12] Checking kickstart validation..."
 VALIDATION=$(virt-cat -a /disk.qcow2 /root/kickstart-kernel-debug.log | grep "VALIDATION PASSED" || echo "NOT FOUND")
 [ "$VALIDATION" != "NOT FOUND" ] && echo "✓ PASS: Kickstart validation passed" || echo "⚠ WARN: Validation marker not found"
 echo ""
@@ -90,7 +144,7 @@ echo "  - systemd-boot will auto-discover UKI"
 echo "  - Ready for dm-verity integration"
 
 echo ""
-echo "[11/11] Checking Secure Boot signatures..."
+echo "[12/12] Checking Secure Boot signatures..."
 echo "Verifying UKI file is properly signed for Secure Boot..."
 
 # Check if pesign tool is available in the image
@@ -133,5 +187,5 @@ echo "  Boot will succeed with Secure Boot enabled"
 
 echo ""
 echo "=========================================="
-echo "✓ ALL 11 HEALTH CHECKS PASSED"
+echo "✓ ALL 12 HEALTH CHECKS PASSED"
 echo "=========================================="
