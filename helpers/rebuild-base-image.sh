@@ -184,9 +184,9 @@ fi
 echo ""
 echo "Checking installed kernels..."
 KERNELS=$(podman run --rm -v ${IMAGE_DIR}:/images:ro localhost/coco-podvm:latest virt-ls -a /images/$(basename $CREATED_IMAGE) /boot/efi/EFI/Linux/ 2>&1 | grep -v '^\.')
-KERNEL_COUNT=$(echo "$KERNELS" | wc -l)
-echo "Found $KERNEL_COUNT kernel(s):"
-echo "$KERNELS"
+EFI_FILE_COUNT=$(echo "$KERNELS" | grep -c '\.efi$' || echo "0")
+echo "Found $EFI_FILE_COUNT .efi file(s):"
+echo "$KERNELS" | grep '\.efi$'
 
 echo ""
 echo "Build logs: $LOG_FILE"
@@ -197,9 +197,9 @@ echo "Step 4.5: Clean up orphaned kernel artifacts"
 echo "=========================================="
 echo ""
 
-# If kickstart updated kernel, there may be orphaned files from old kernel
-# Clean them up using virt-customize
-if [ "$KERNEL_COUNT" -gt 1 ]; then
+# Only clean up if there are multiple .efi files
+# Orphaned .extra.d directories are harmless and don't need cleanup
+if [ "$EFI_FILE_COUNT" -gt 1 ]; then
     echo "⚠️  Multiple kernel files detected - cleaning up orphaned artifacts..."
     
     # Find the newest .efi file (the one we want to keep)
