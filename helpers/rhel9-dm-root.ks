@@ -98,8 +98,37 @@ fi
 # Register with Red Hat subscription manager
 subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" || echo "Warning: subscription-manager registration failed"
 
-# NOTE: Kernel update moved to container build process (update-kernel.sh)
-# This keeps the base image stable and allows better control over kernel updates
+# Configure repositories (based on working subscription-manager commands)
+subscription-manager repos --disable="*eus*" || echo "Warning: disable EUS repos failed"
+subscription-manager release --set=9.7 || echo "Warning: set release failed"
+subscription-manager repos --enable=rhel-9-for-x86_64-baseos-rpms || echo "Warning: enable baseos failed"
+subscription-manager repos --enable=rhel-9-for-x86_64-appstream-rpms || echo "Warning: enable appstream failed"
+
+# Update kernel during kickstart (has network access, unlike virt-customize)
+echo "=== Updating kernel to fix CVE-2026-31431 ==="
+dnf update -y kernel-uki-virt kernel-uki-virt-addons || echo "Warning: kernel update failed"
+
+# Remove old kernel versions
+OLD_KERNELS=$(rpm -q kernel-uki-virt | head -n -1)
+if [ -n "$OLD_KERNELS" ]; then
+    echo "Removing old kernel(s): $OLD_KERNELS"
+    for pkg in $OLD_KERNELS; do
+        OLD_VERSION=$(echo $pkg | sed 's/kernel-uki-virt-//')
+        dnf remove -y kernel-uki-virt-$OLD_VERSION kernel-uki-virt-addons-$OLD_VERSION kernel-modules-core-$OLD_VERSION || echo "Warning: failed to remove $OLD_VERSION"
+    done
+fi
+
+# Set new kernel as default boot entry
+NEW_KERNEL=$(ls -t /boot/efi/EFI/Linux/*.efi | head -1)
+if [ -n "$NEW_KERNEL" ]; then
+    echo "Setting default boot to: $(basename $NEW_KERNEL)"
+    echo "default $(basename $NEW_KERNEL .efi)" > /boot/loader/loader.conf
+    echo "timeout 3" >> /boot/loader/loader.conf
+fi
+
+echo "=== Final kernel state ==="
+rpm -qa | grep kernel-uki-virt | sort
+ls -lh /boot/efi/EFI/Linux/*.efi
 
 # Clean up subscription data - remove all traces of credentials
 subscription-manager unregister || echo "Warning: unregister failed"
