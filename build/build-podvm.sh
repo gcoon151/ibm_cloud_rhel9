@@ -81,8 +81,8 @@ build_binaries() {
     log_info "Secret files created"
     
     # Show Dockerfile info
-    log_info "Dockerfile: podvm-payload/Dockerfile (first 20 lines)"
-    head -20 podvm-payload/Dockerfile | sed 's/^/  /'
+    log_info "Dockerfile: src/cloud-api-adaptor/podvm/Dockerfile.podvm_binaries.rhel (first 20 lines)"
+    head -20 src/cloud-api-adaptor/podvm/Dockerfile.podvm_binaries.rhel | sed 's/^/  /'
     echo "  ..."
     echo ""
     
@@ -99,7 +99,7 @@ build_binaries() {
     
     time podman build \
         -t "$PAYLOAD_IMAGE" \
-        -f podvm-payload/Dockerfile \
+        -f src/cloud-api-adaptor/podvm/Dockerfile.podvm_binaries.rhel \
         --secret id=org,src=org_secret.txt \
         --secret id=key,src=key_secret.txt \
         --build-arg ARCH=x86_64 \
