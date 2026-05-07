@@ -23,7 +23,8 @@ RUN curl -O https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.r
     rm epel-release-latest-9.noarch.rpm
 
 # Install virt-customize and dependencies
-RUN dnf install -y guestfs-tools libguestfs-tools sbsigntools
+# pesign: For verifying Secure Boot signatures on UKI files
+RUN dnf install -y guestfs-tools libguestfs-tools sbsigntools pesign
 
 # scripts
 ADD scripts /scripts

@@ -39,3 +39,30 @@ sudo podman run --rm \
     $run_extras \
     localhost/coco-podvm
 
+# Run boot health validation after successful build
+if [ -f helpers/validate-boot-health.sh ]; then
+    echo ""
+    echo "==========================================="
+    echo "Running boot health validation..."
+    echo "==========================================="
+    
+    # Run validation script inside container
+    sudo podman run --rm \
+        --privileged \
+        -v $QCOW2:/disk.qcow2 \
+        -v $(pwd)/helpers/validate-boot-health.sh:/validate.sh \
+        -v /lib/modules:/lib/modules:ro,Z \
+        -v /boot:/boot:ro \
+        localhost/coco-podvm \
+        /validate.sh
+    
+    if [ $? -eq 0 ]; then
+        echo ""
+        echo "✓ Boot health validation PASSED"
+    else
+        echo ""
+        echo "✗ Boot health validation FAILED"
+        echo "Image may not boot correctly"
+        exit 1
+    fi
+fi
