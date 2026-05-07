@@ -262,7 +262,9 @@ touch /etc/kernel/install.d/20-grub.install
 touch /etc/kernel/install.d/50-dracut.install
 
 # set up fallback boot to UKI
-printf "shimx64.efi,redhat,\\\EFI\\\Linux\\\\"`cat /etc/machine-id`"-"`rpm -q --queryformat %{VERSION}-%{RELEASE} kernel-uki-virt`".x86_64.efi ,UKI bootentry\n" | iconv -f ASCII -t UCS-2 > /boot/efi/EFI/redhat/BOOTX64.CSV
+# Use tail -1 to get only the latest kernel if multiple are installed
+LATEST_KERNEL=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}\n' kernel-uki-virt | tail -1)
+printf "shimx64.efi,redhat,\\\EFI\\\Linux\\\\"`cat /etc/machine-id`"-"$LATEST_KERNEL".x86_64.efi ,UKI bootentry\n" | iconv -f ASCII -t UCS-2 > /boot/efi/EFI/redhat/BOOTX64.CSV
 
 # remove 'standard' grub
 rpm -e grub2-efi-x64 grub2-common grub2-tools grub2-tools-minimal grubby os-prober
