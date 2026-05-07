@@ -95,40 +95,153 @@ if [ -z "$ORG_ID" ] || [ -z "$ACTIVATION_KEY" ]; then
     exit 1
 fi
 
+# ============================================
+# COMPREHENSIVE LOGGING AND VALIDATION
+# ============================================
+LOGFILE="/root/kickstart-kernel-debug.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+log_step() {
+    echo ""
+    echo "=========================================="
+    echo "STEP: $1"
+    echo "Time: $(date)"
+    echo "=========================================="
+}
+
+log_check() {
+    echo "CHECK: $1"
+}
+
+log_error() {
+    echo "ERROR: $1" >&2
+}
+
+log_step "Starting kernel update process"
+
 # Register with Red Hat subscription manager
-subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY" || echo "Warning: subscription-manager registration failed"
+log_step "Registering with Red Hat subscription manager"
+if subscription-manager register --org="$ORG_ID" --activationkey="$ACTIVATION_KEY"; then
+    log_check "✓ Registration successful"
+else
+    log_error "✗ Registration failed (exit code: $?)"
+    exit 1
+fi
 
-# Configure repositories (based on working subscription-manager commands)
-subscription-manager repos --disable="*eus*" || echo "Warning: disable EUS repos failed"
-subscription-manager release --set=9.7 || echo "Warning: set release failed"
-subscription-manager repos --enable=rhel-9-for-x86_64-baseos-rpms || echo "Warning: enable baseos failed"
-subscription-manager repos --enable=rhel-9-for-x86_64-appstream-rpms || echo "Warning: enable appstream failed"
+# Configure repositories
+log_step "Configuring repositories"
+subscription-manager repos --disable="*eus*"
+log_check "Disabled EUS repos (exit code: $?)"
 
-# Update kernel during kickstart (has network access, unlike virt-customize)
-echo "=== Updating kernel to fix CVE-2026-31431 ==="
-dnf update -y kernel-uki-virt kernel-uki-virt-addons || echo "Warning: kernel update failed"
+subscription-manager release --set=9.7
+log_check "Set release to 9.7 (exit code: $?)"
+
+subscription-manager repos --enable=rhel-9-for-x86_64-baseos-rpms
+log_check "Enabled baseos repo (exit code: $?)"
+
+subscription-manager repos --enable=rhel-9-for-x86_64-appstream-rpms
+log_check "Enabled appstream repo (exit code: $?)"
+
+log_check "Active repositories:"
+subscription-manager repos --list-enabled | grep "Repo ID" | head -5
+
+# Show kernel state BEFORE update
+log_step "Kernel state BEFORE update"
+log_check "Installed kernel packages:"
+rpm -qa | grep kernel-uki-virt | sort
+log_check "UKI files in /boot/efi/EFI/Linux/:"
+ls -lh /boot/efi/EFI/Linux/*.efi 2>/dev/null || echo "No .efi files found"
+log_check "Count of .efi files: $(ls /boot/efi/EFI/Linux/*.efi 2>/dev/null | wc -l)"
+
+# Update kernel
+log_step "Updating kernel to fix CVE-2026-31431"
+if dnf update -y kernel-uki-virt kernel-uki-virt-addons; then
+    log_check "✓ Kernel update successful"
+else
+    log_error "✗ Kernel update failed (exit code: $?)"
+    exit 1
+fi
+
+# Show kernel state AFTER update
+log_step "Kernel state AFTER update"
+log_check "Installed kernel packages:"
+rpm -qa | grep kernel-uki-virt | sort
+log_check "UKI files in /boot/efi/EFI/Linux/:"
+ls -lh /boot/efi/EFI/Linux/*.efi 2>/dev/null || echo "No .efi files found"
+log_check "Count of .efi files: $(ls /boot/efi/EFI/Linux/*.efi 2>/dev/null | wc -l)"
 
 # Remove old kernel versions
+log_step "Removing old kernel versions"
 OLD_KERNELS=$(rpm -q kernel-uki-virt | head -n -1)
 if [ -n "$OLD_KERNELS" ]; then
-    echo "Removing old kernel(s): $OLD_KERNELS"
+    log_check "Old kernels to remove: $OLD_KERNELS"
     for pkg in $OLD_KERNELS; do
         OLD_VERSION=$(echo $pkg | sed 's/kernel-uki-virt-//')
-        dnf remove -y kernel-uki-virt-$OLD_VERSION kernel-uki-virt-addons-$OLD_VERSION kernel-modules-core-$OLD_VERSION || echo "Warning: failed to remove $OLD_VERSION"
+        log_check "Attempting to remove kernel version: $OLD_VERSION"
+        
+        # Remove kernel packages
+        if dnf remove -y kernel-uki-virt-$OLD_VERSION kernel-uki-virt-addons-$OLD_VERSION kernel-modules-core-$OLD_VERSION; then
+            log_check "✓ DNF remove successful for $OLD_VERSION"
+        else
+            log_error "✗ DNF remove failed for $OLD_VERSION (exit code: $?)"
+        fi
+        
+        # Force remove .efi files if they still exist
+        OLD_EFI_PATTERN="/boot/efi/EFI/Linux/*${OLD_VERSION}*"
+        if ls $OLD_EFI_PATTERN 2>/dev/null; then
+            log_check "Old .efi files still exist, force removing..."
+            rm -fv $OLD_EFI_PATTERN
+            log_check "Force removal exit code: $?"
+        fi
     done
+else
+    log_check "No old kernels found to remove"
+fi
+
+# Show kernel state AFTER removal
+log_step "Kernel state AFTER removal"
+log_check "Installed kernel packages:"
+rpm -qa | grep kernel-uki-virt | sort
+log_check "UKI files in /boot/efi/EFI/Linux/:"
+ls -lh /boot/efi/EFI/Linux/*.efi 2>/dev/null || echo "No .efi files found"
+EFI_COUNT=$(ls /boot/efi/EFI/Linux/*.efi 2>/dev/null | wc -l)
+log_check "Count of .efi files: $EFI_COUNT"
+
+# VALIDATION: Ensure exactly ONE .efi file
+if [ "$EFI_COUNT" -ne 1 ]; then
+    log_error "VALIDATION FAILED: Expected 1 .efi file, found $EFI_COUNT"
+    log_error "This will cause verity.sh to fail during PodVM build!"
+    log_error "Listing all .efi files:"
+    ls -la /boot/efi/EFI/Linux/
+    exit 1
+else
+    log_check "✓ VALIDATION PASSED: Exactly 1 .efi file found"
 fi
 
 # Set new kernel as default boot entry
+log_step "Setting default boot entry"
 NEW_KERNEL=$(ls -t /boot/efi/EFI/Linux/*.efi | head -1)
 if [ -n "$NEW_KERNEL" ]; then
-    echo "Setting default boot to: $(basename $NEW_KERNEL)"
+    log_check "Setting default boot to: $(basename $NEW_KERNEL)"
     echo "default $(basename $NEW_KERNEL .efi)" > /boot/loader/loader.conf
     echo "timeout 3" >> /boot/loader/loader.conf
+    log_check "✓ Boot loader configured"
+    log_check "Boot loader config:"
+    cat /boot/loader/loader.conf
+else
+    log_error "✗ No kernel found to set as default"
+    exit 1
 fi
 
-echo "=== Final kernel state ==="
+log_step "Final kernel state summary"
+log_check "Kernel packages:"
 rpm -qa | grep kernel-uki-virt | sort
+log_check "UKI files:"
 ls -lh /boot/efi/EFI/Linux/*.efi
+log_check "Boot loader:"
+cat /boot/loader/loader.conf
+
+log_step "Kernel update process completed successfully"
 
 # Clean up subscription data - remove all traces of credentials
 subscription-manager unregister || echo "Warning: unregister failed"
