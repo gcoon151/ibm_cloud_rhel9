@@ -121,3 +121,6 @@ Commit 26a408e made these changes to `helpers/rhel9-dm-root.ks`:
 - Better diagnostics when builds fail
 - Clear indication of which step failed
 - Suggestions for common issues
+
+### 5. Intercept this log on kickstart build better
+- "cat /home/gcoon/gits/ibm_cloud_rhel9/logs/base-image-build-20260507-090223.log
