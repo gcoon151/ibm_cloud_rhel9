@@ -150,6 +150,10 @@ echo "Found created image: $CREATED_IMAGE"
 echo "Size: $(du -h $CREATED_IMAGE | cut -f1)"
 echo "Created: $(stat -c %y $CREATED_IMAGE | cut -d. -f1)"
 
+# Fix permissions - virt-install creates images with 600, but we need 644 for copying
+echo "Setting proper permissions (644)..."
+chmod 644 "$CREATED_IMAGE"
+
 echo ""
 echo "=========================================="
 echo "Step 4: Extract and analyze build logs"

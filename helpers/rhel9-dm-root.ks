@@ -79,6 +79,9 @@ uki-direct
 # versionlock plugin
 python3-dnf-plugin-versionlock
 
+# Secure Boot signature verification
+pesign
+
 afterburn
 e2fsprogs
 
