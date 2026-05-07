@@ -325,21 +325,38 @@ echo "Boot test log: $BOOT_LOG"
 
 echo ""
 echo "=========================================="
+echo "Step 7: Move validated image to production"
+echo "=========================================="
+echo ""
+
+if [ "$BOOT_SUCCESS" = "true" ]; then
+    # Move the validated image to the production filename
+    if [ "$CREATED_IMAGE" != "$OLD_IMAGE" ]; then
+        echo "Moving validated image to production filename..."
+        echo "  From: $CREATED_IMAGE"
+        echo "  To:   $OLD_IMAGE"
+        mv "$CREATED_IMAGE" "$OLD_IMAGE"
+        echo "✓ Image moved to production location"
+    else
+        echo "✓ Image already at production location"
+    fi
+else
+    echo "⚠️  Boot test failed - NOT moving image to production"
+    echo "Failed image left at: $CREATED_IMAGE"
+    exit 1
+fi
+
+echo ""
+echo "=========================================="
 echo "Build Complete"
 echo "=========================================="
 echo ""
-echo "Image: $CREATED_IMAGE"
+echo "Production image: $OLD_IMAGE"
 echo "Backup: $BACKUP_IMAGE"
 echo "Logs: $LOG_FILE"
 echo "Boot test: $BOOT_LOG"
 echo ""
-
-if [ "$BOOT_SUCCESS" = "true" ]; then
-    echo "✓ Image validated and ready for PodVM builds"
-else
-    echo "⚠️  WARNING: Boot test failed - review logs before using"
-    exit 1
-fi
+echo "✓ Image validated and ready for PodVM builds"
 echo ""
 
 # Made with Bob
