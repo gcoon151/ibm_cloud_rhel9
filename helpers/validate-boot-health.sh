@@ -103,7 +103,7 @@ echo "    $BOOTCSV_CONTENT"
 
 # Extract the .efi filename from BOOTX64.CSV
 # Format: shimx64.efi,redhat,\EFI\Linux\<machine-id>-<kernel-version>.x86_64.efi ,UKI bootentry
-EFI_FILENAME=$(echo "$BOOTCSV_CONTENT" | sed -n 's/.*\\EFI\\Linux\\\([^,]*\).*/\1/p')
+EFI_FILENAME=$(echo "$BOOTCSV_CONTENT" | sed -n 's/.*\\EFI\\Linux\\\([^,]*\).*/\1/p' | xargs)
 
 if [ -z "$EFI_FILENAME" ]; then
     echo "✗ FAIL: Could not extract .efi filename from BOOTX64.CSV"
