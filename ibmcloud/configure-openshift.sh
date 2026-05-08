@@ -178,7 +178,7 @@ configure_image() {
     log_info "Updating test YAML files..."
     TEST_YAML="$PROJECT_ROOT/configs/test-podvm-image.yaml"
     if [ -f "$TEST_YAML" ]; then
-        sed -i '' "s|io.katacontainers.config.hypervisor.image: r014-[a-f0-9-]*|io.katacontainers.config.hypervisor.image: $IMAGE_ID|g" "$TEST_YAML"
+        sed -E -i '' "s|(io\.katacontainers\.config\.hypervisor\.image:[[:space:]]*)\"?r014-[a-z0-9-]+\"?|\1\"$IMAGE_ID\"|g" "$TEST_YAML"
         log_info "✓ Updated $TEST_YAML"
     fi
     
