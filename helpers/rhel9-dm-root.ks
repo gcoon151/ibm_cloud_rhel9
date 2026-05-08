@@ -76,6 +76,9 @@ kernel-uki-virt
 kernel-uki-virt-addons
 uki-direct
 
+# Secure Boot signature verification
+pesign
+
 # versionlock plugin
 python3-dnf-plugin-versionlock
 
