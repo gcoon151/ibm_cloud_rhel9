@@ -4,6 +4,18 @@ dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStrea
 
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
+
+# Patch agent-config.toml with Red Hat required settings
+echo "=========================================="
+echo "Patching agent-config.toml..."
+echo "=========================================="
+cat >> /etc/agent-config.toml <<'EOF'
+enable_signature_verification = true
+image_policy_file = "/etc/containers/policy.json"
+EOF
+echo "✓ Added signature verification settings to agent-config.toml"
+echo ""
+
 # set luks
 # TODO: move to payload ?
 tar -xzvf /tmp/luks-config.tar.gz -C /
