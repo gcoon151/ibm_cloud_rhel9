@@ -41,8 +41,8 @@ fi
 # Configuration - environment variables passed from remote-build.sh take precedence over .env
 ORG_ID="${ORG_ID:-}"
 ACTIVATION_KEY="${ACTIVATION_KEY:-}"
-PAYLOAD_TAG="${CMD_PODVM_TAG:-${PODVM_TAG:-candidate}}"  # Command-line > .env > default
-PAYLOAD_IMAGE="quay.io/rh-ee-gcoon/podvm_binaries:${PAYLOAD_TAG}"
+PAYLOAD_TAG="${CMD_PODVM_TAG:-${PODVM_TAG:-ffb785e}}"  # Command-line > .env > default
+PAYLOAD_IMAGE="registry.redhat.io/openshift-sandboxed-containers/osc-podvm-payload-rhel9:${PAYLOAD_TAG}"
 SSHD_SERVICE="${CMD_SSHD_SERVICE:-${SSHD_SERVICE:-true}}"  # Command-line > .env > default
 APPLY_VERITY="${CMD_APPLY_VERITY:-${APPLY_VERITY:-false}}"  # Command-line > .env > default
 UPDATE_KERNEL="${CMD_UPDATE_KERNEL:-${UPDATE_KERNEL:-false}}"  # Command-line > .env > default
@@ -151,16 +151,17 @@ build_qcow2() {
         log_warn "No Uptycs package found in edr/ - build will proceed without Uptycs"
     fi
     
-    # Check if payload image exists
-    if ! podman images | grep -q "rh-ee-gcoon/podvm_binaries"; then
-        log_error "No payload image found. Run with 'binaries' first or 'all'"
-        exit 1
-    fi
-    
-    # Use the most recent payload image if not building fresh
+    # For qcow2-only mode, pull the Red Hat upstream image if not present
     if [ "$MODE" = "qcow2" ]; then
-        PAYLOAD_IMAGE=$(podman images --format "{{.Repository}}:{{.Tag}}" | grep "rh-ee-gcoon/podvm_binaries" | head -1)
-        log_info "Using existing payload: $PAYLOAD_IMAGE"
+        # Check if Red Hat image is already pulled
+        if ! podman images | grep -q "osc-podvm-payload-rhel9:${PAYLOAD_TAG}"; then
+            log_info "Pulling Red Hat upstream payload image..."
+            podman pull "$PAYLOAD_IMAGE" || {
+                log_error "Failed to pull Red Hat payload image: $PAYLOAD_IMAGE"
+                exit 1
+            }
+        fi
+        log_info "Using Red Hat upstream payload: $PAYLOAD_IMAGE"
     fi
     
     # Navigate to ibm_cloud_rhel9 (consolidated build directory)
