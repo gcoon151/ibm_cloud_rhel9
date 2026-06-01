@@ -9,11 +9,20 @@ tar -xzvf /tmp/pause-bundle.tar.gz -C /
 echo "=========================================="
 echo "Patching agent-config.toml..."
 echo "=========================================="
-cat >> /etc/agent-config.toml <<'EOF'
-enable_signature_verification = true
-image_policy_file = "/etc/containers/policy.json"
-EOF
-echo "✓ Added signature verification settings to agent-config.toml"
+# Only add if not already present (idempotent)
+if ! grep -q "enable_signature_verification" /etc/agent-config.toml; then
+    echo 'enable_signature_verification = true' >> /etc/agent-config.toml
+    echo "✓ Added enable_signature_verification"
+else
+    echo "✓ enable_signature_verification already present"
+fi
+if ! grep -q "image_policy_file" /etc/agent-config.toml; then
+    echo 'image_policy_file = "/etc/containers/policy.json"' >> /etc/agent-config.toml
+    echo "✓ Added image_policy_file"
+else
+    echo "✓ image_policy_file already present"
+fi
+echo "✓ agent-config.toml patching complete"
 echo ""
 
 # set luks
