@@ -151,17 +151,20 @@ build_qcow2() {
         log_warn "No Uptycs package found in edr/ - build will proceed without Uptycs"
     fi
     
-    # For qcow2-only mode, pull the Red Hat upstream image if not present
+    # For qcow2-only mode, check if Red Hat upstream image exists locally
     if [ "$MODE" = "qcow2" ]; then
-        # Check if Red Hat image is already pulled
-        if ! podman images | grep -q "osc-podvm-payload-rhel9:${PAYLOAD_TAG}"; then
+        # Check if Red Hat image is already pulled (use podman image exists for reliable check)
+        if ! podman image exists "$PAYLOAD_IMAGE"; then
             log_info "Pulling Red Hat upstream payload image..."
             podman pull "$PAYLOAD_IMAGE" || {
                 log_error "Failed to pull Red Hat payload image: $PAYLOAD_IMAGE"
+                log_error "Image may need to be pulled manually with Red Hat credentials"
                 exit 1
             }
+        else
+            log_info "Using locally cached Red Hat payload image"
         fi
-        log_info "Using Red Hat upstream payload: $PAYLOAD_IMAGE"
+        log_info "Payload: $PAYLOAD_IMAGE"
     fi
     
     # Navigate to ibm_cloud_rhel9 (consolidated build directory)
