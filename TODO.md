@@ -98,6 +98,24 @@ Commit 26a408e made these changes to `helpers/rhel9-dm-root.ks`:
 
 ---
 
+### 3. Automate Red Hat upstream image tag updates
+**Issue**: Currently pinned to `ffb785e` tag in scripts. Need to automate checking for and updating to latest Red Hat upstream image.
+
+**Current state**:
+- Hardcoded `ffb785e` in `scripts/remote-build.sh` default
+- Hardcoded `ffb785e` in `ibm_cloud_rhel9/build/build-podvm.sh` default
+- Manual process to find and update to new tags
+
+**Desired solution**:
+- Script to query Red Hat registry for latest tag
+- Automated update of default tag in scripts
+- Documentation on how to find latest tag manually
+- Consider using `latest` tag if Red Hat provides one
+
+**Priority**: Medium - improves maintainability
+
+---
+
 ## Medium Priority
 
 ### 2. Optimize container rebuild strategy
