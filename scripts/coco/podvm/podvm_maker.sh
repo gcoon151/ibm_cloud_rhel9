@@ -5,6 +5,46 @@ dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStrea
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
 
+# Create policy.json for signature verification
+# This is required by agent-config.toml's image_policy_file setting
+echo "Creating /etc/containers/policy.json..."
+mkdir -p /etc/containers
+cat > /etc/containers/policy.json << 'EOF'
+{
+    "default": [
+        {
+            "type": "insecureAcceptAnything"
+        }
+    ],
+    "transports": {
+        "docker": {
+            "": [
+                {
+                    "type": "insecureAcceptAnything"
+                }
+            ]
+        },
+        "docker-daemon": {
+            "": [
+                {
+                    "type": "insecureAcceptAnything"
+                }
+            ]
+        },
+        "containers-storage": {
+            "": [
+                {
+                    "type": "insecureAcceptAnything"
+                }
+            ]
+        }
+    }
+}
+EOF
+chmod 644 /etc/containers/policy.json
+echo "✓ policy.json created"
+echo ""
+
 # set luks
 # TODO: move to payload ?
 tar -xzvf /tmp/luks-config.tar.gz -C /
