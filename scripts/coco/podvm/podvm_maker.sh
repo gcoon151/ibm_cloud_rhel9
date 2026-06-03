@@ -5,37 +5,6 @@ dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStrea
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
 
-# Patch agent-config.toml with Red Hat required settings
-echo "=========================================="
-echo "Patching agent-config.toml..."
-echo "=========================================="
-echo "DEBUG: Checking if /etc/agent-config.toml exists..."
-if [ -f /etc/agent-config.toml ]; then
-    echo "DEBUG: File exists, current content:"
-    cat /etc/agent-config.toml
-    echo "DEBUG: Applying patch..."
-    # Only add if not already present (idempotent)
-    if ! grep -q "enable_signature_verification" /etc/agent-config.toml; then
-        echo 'enable_signature_verification = true' >> /etc/agent-config.toml
-        echo "✓ Added enable_signature_verification"
-    else
-        echo "✓ enable_signature_verification already present"
-    fi
-    if ! grep -q "image_policy_file" /etc/agent-config.toml; then
-        echo 'image_policy_file = "/etc/containers/policy.json"' >> /etc/agent-config.toml
-        echo "✓ Added image_policy_file"
-    else
-        echo "✓ image_policy_file already present"
-    fi
-    echo "DEBUG: After patch:"
-    cat /etc/agent-config.toml
-    echo "✓ agent-config.toml patching complete"
-else
-    echo "ERROR: /etc/agent-config.toml does not exist!"
-    exit 1
-fi
-echo ""
-
 # set luks
 # TODO: move to payload ?
 tar -xzvf /tmp/luks-config.tar.gz -C /

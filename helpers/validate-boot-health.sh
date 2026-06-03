@@ -1,13 +1,16 @@
 #!/bin/bash
 set -e
 
+# Count total tests by searching for test markers
+TOTAL_TESTS=$(grep -c "^echo \"\[.*\] " "$0" || echo "12")
+
 echo "=========================================="
 echo "  RHEL 9 UKI Boot System Health Check"
 echo "=========================================="
 echo ""
 
 # 1-6: Same as before (all passing)
-echo "[1/10] Checking UKI .efi files..."
+echo "[1/$TOTAL_TESTS] Checking UKI .efi files..."
 EFI_FILES=$(virt-ls -a /disk.qcow2 /boot/efi/EFI/Linux/ | grep "\.efi$" || true)
 EFI_COUNT=$(echo "$EFI_FILES" | grep -c "\.efi$" || echo "0")
 echo "Found $EFI_COUNT .efi file(s):"
@@ -15,7 +18,7 @@ echo "$EFI_FILES" | sed "s/^/  /"
 [ "$EFI_COUNT" -eq 1 ] && echo "✓ PASS: Exactly 1 UKI file found" || { echo "✗ FAIL"; exit 1; }
 echo ""
 
-echo "[2/10] Checking for orphaned .extra.d directories..."
+echo "[2/$TOTAL_TESTS] Checking for orphaned .extra.d directories..."
 EXTRA_DIRS=$(virt-ls -a /disk.qcow2 /boot/efi/EFI/Linux/ | grep "\.extra\.d$" || true)
 EXTRA_COUNT=$(echo "$EXTRA_DIRS" | grep -c "\.extra\.d$" || echo "0")
 echo "Found $EXTRA_COUNT .extra.d director(ies):"
@@ -31,7 +34,7 @@ else
 fi
 echo ""
 
-echo "[3/10] Checking .hmac integrity files..."
+echo "[3/$TOTAL_TESTS] Checking .hmac integrity files..."
 HMAC_FILES=$(virt-ls -a /disk.qcow2 /boot/efi/EFI/Linux/ | grep "\.hmac$" || true)
 HMAC_COUNT=$(echo "$HMAC_FILES" | grep -c "\.hmac$" || echo "0")
 echo "Found $HMAC_COUNT .hmac file(s):"
@@ -39,12 +42,12 @@ echo "$HMAC_FILES" | sed "s/^/  /"
 [ "$HMAC_COUNT" -ge 1 ] && echo "✓ PASS: .hmac file(s) present" || { echo "✗ FAIL"; exit 1; }
 echo ""
 
-echo "[4/10] Checking systemd-boot configuration..."
+echo "[4/$TOTAL_TESTS] Checking systemd-boot configuration..."
 echo "RHEL 9 UKI uses systemd-boot auto-discovery"
 virt-ls -a /disk.qcow2 /boot/efi/EFI/BOOT/ | grep -q "BOOTX64.EFI" && echo "✓ PASS: systemd-boot present" || { echo "✗ FAIL"; exit 1; }
 echo ""
 
-echo "[5/10] Checking kernel modules..."
+echo "[5/$TOTAL_TESTS] Checking kernel modules..."
 MODULE_DIRS=$(virt-ls -a /disk.qcow2 /lib/modules/ 2>/dev/null || true)
 if [ -n "$MODULE_DIRS" ]; then
     echo "$MODULE_DIRS" | sed "s/^/  /"
@@ -55,17 +58,17 @@ else
 fi
 echo ""
 
-echo "[6/10] Checking for old kernel artifacts..."
+echo "[6/$TOTAL_TESTS] Checking for old kernel artifacts..."
 echo "$MODULE_DIRS" | grep -q "5.14.0-611.5.1" && echo "⚠ WARN: Old kernel modules present (OK - .efi removed)" || echo "✓ PASS: No old modules"
 echo ""
 
-echo "[7/10] Checking UKI file exists..."
+echo "[7/$TOTAL_TESTS] Checking UKI file exists..."
 UKI_FILE=$(echo "$EFI_FILES" | head -1)
 echo "UKI file: $UKI_FILE"
 echo "✓ PASS: UKI file confirmed"
 echo ""
 
-echo "[8/10] Checking EFI partition structure..."
+echo "[8/$TOTAL_TESTS] Checking EFI partition structure..."
 EFI_DIRS=$(virt-ls -a /disk.qcow2 /boot/efi/EFI/ 2>/dev/null || true)
 for dir in BOOT Linux redhat; do
     echo "$EFI_DIRS" | grep -q "^$dir$" && echo "  ✓ $dir/ exists" || { echo "  ✗ $dir/ missing"; exit 1; }
@@ -73,13 +76,13 @@ done
 echo "✓ PASS: EFI partition structure correct"
 echo ""
 
-echo "[9/10] Checking Secure Boot components..."
+echo "[9/$TOTAL_TESTS] Checking Secure Boot components..."
 SHIM_FILES=$(virt-ls -a /disk.qcow2 /boot/efi/EFI/redhat/ | grep -E "(shim|mm)" || true)
 echo "$SHIM_FILES" | sed "s/^/  /"
 echo "$SHIM_FILES" | grep -q "shim" && echo "✓ PASS: Shim bootloader present" || echo "⚠ WARN: Shim not found"
 echo ""
 
-echo "[10/12] CRITICAL: Validating BOOTX64.CSV integrity..."
+echo "[10/$TOTAL_TESTS] CRITICAL: Validating BOOTX64.CSV integrity..."
 echo "This file tells UEFI firmware which kernel to boot"
 
 # Check if BOOTX64.CSV exists
@@ -133,7 +136,7 @@ echo "  ✓ Referenced UKI file exists: $EFI_FILENAME"
 echo "✓ PASS: BOOTX64.CSV is valid and will boot correctly"
 echo ""
 
-echo "[11/12] Checking kickstart validation..."
+echo "[11/$TOTAL_TESTS] Checking kickstart validation..."
 VALIDATION=$(virt-cat -a /disk.qcow2 /root/kickstart-kernel-debug.log | grep "VALIDATION PASSED" || echo "NOT FOUND")
 [ "$VALIDATION" != "NOT FOUND" ] && echo "✓ PASS: Kickstart validation passed" || echo "⚠ WARN: Validation marker not found"
 echo ""
@@ -149,7 +152,7 @@ echo "  - systemd-boot will auto-discover UKI"
 echo "  - Ready for dm-verity integration"
 
 echo ""
-echo "[12/12] Checking Secure Boot signatures..."
+echo "[12/$TOTAL_TESTS] Checking Secure Boot signatures..."
 echo "Verifying UKI file is properly signed for Secure Boot..."
 
 # Check if pesign tool is available in the image
@@ -192,5 +195,5 @@ echo "  Boot will succeed with Secure Boot enabled"
 
 echo ""
 echo "=========================================="
-echo "✓ ALL 12 HEALTH CHECKS PASSED"
+echo "✓ ALL $TOTAL_TESTS HEALTH CHECKS PASSED"
 echo "=========================================="
