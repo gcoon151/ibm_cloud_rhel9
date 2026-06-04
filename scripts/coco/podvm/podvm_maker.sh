@@ -5,8 +5,14 @@ dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStrea
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
 
-# Note: policy.json is now copied by coco-components.sh before this script runs
-# This ensures it exists when agent-config.toml references it
+# Patch agent-config.toml: Red Hat's payload only has 2 lines, we need to add image_registry_auth
+echo "Patching agent-config.toml to add image_registry_auth..."
+if ! grep -q "image_registry_auth" /etc/agent-config.toml; then
+    echo 'image_registry_auth = "file:///run/peerpod/auth.json"' >> /etc/agent-config.toml
+    echo "✓ Added image_registry_auth to agent-config.toml"
+else
+    echo "✓ image_registry_auth already present in agent-config.toml"
+fi
 
 # set luks
 # TODO: move to payload ?
