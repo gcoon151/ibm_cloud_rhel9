@@ -124,7 +124,11 @@ export LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
 # NOTE: Kernel removal disabled - breaks agent-protocol-forwarder
 # See TODO.md for future kernel cleanup work
 
+# Create /etc/containers directory and copy policy.json BEFORE running podvm_maker.sh
+# This ensures the file exists when agent-config.toml references it
 virt-customize \
+    --mkdir /etc/containers \
+    --copy-in $ARTIFACTS_FOLDER/policy.json:/etc/containers/ \
     --copy-in $ARTIFACTS_FOLDER/podvm-binaries.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/pause-bundle.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/luks-config.tar.gz:/tmp/ \
