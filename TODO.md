@@ -1,15 +1,82 @@
 # TODO - Build System Improvements
 
+## Completed (June 5, 2026)
+
+### ✅ Fixed agent-config.toml missing configuration
+**Issue**: Red Hat's payload container only included 2 lines in agent-config.toml, missing `image_registry_auth` line.
+
+**Solution**: Added patch in `scripts/coco/podvm/podvm_maker.sh` to append missing line during build.
+
+**Result**: 
+- Built and validated image rhel97-2026060405.qcow2
+- All 15 tests passed
+- Added to working_list.txt
+
+---
+
+### ✅ Implemented hardened image workflow
+**Issue**: Need SSH-disabled images for production/compliance requirements.
+
+**Solution**: 
+- Created `scripts/harden-image.sh` to create hardened versions from validated images
+- Fixed `scripts/create-vsi-image.sh` to detect and handle hardened images
+- Added hardened test suite (7 tests, no SSH required)
+- Documented complete workflow in BUILD_ARCHITECTURE.md
+
+**Result**:
+- Built and validated rhel97-2026060405-hardened.qcow2
+- All 7 hardened tests passed
+- Added to working_list.txt
+
+---
+
 ## High Priority
 
-### 1. INVESTIGATE: Can kernel update move back to kickstart now that repos are synced?
+### 1. RHEL 9.8 Base Image for CVE Fixes
+**Goal**: Update base image to RHEL 9.8 to pull in critical CVE fixes.
+
+**Tasks**:
+- [ ] Download RHEL 9.8 ISO from Red Hat
+- [ ] Review kickstart file (helpers/rhel9-dm-root.ks) for any needed updates
+- [ ] Build new base image from RHEL 9.8 ISO
+- [ ] Test with existing payload (ffb785e)
+- [ ] Validate boot and functionality
+- [ ] Document any changes needed for RHEL 9.8
+
+**Priority**: High - security updates
+
+---
+
+### 2. Image Signing for Hardened Images
+**Goal**: Implement container image signature verification in hardened images.
+
+**Background**: 
+- agent-config.toml has `enable_signature_verification = true` and `image_policy_file = "/etc/containers/policy.json"`
+- Currently these settings are present but not fully functional
+- Need proper policy.json configuration
+
+**Tasks**:
+- [ ] Research proper policy.json format for signature verification
+- [ ] Create working policy.json with all required fields
+- [ ] Test signature verification with signed images
+- [ ] Add signature verification to hardened build workflow
+- [ ] Document signing process and requirements
+- [ ] Update BUILD_ARCHITECTURE.md with signing workflow
+
+**Priority**: High - security requirement for hardened images
+
+**Note**: DO NOT add signature verification lines to agent-config.toml without a working policy.json!
+
+---
+
+### 3. INVESTIGATE: Can kernel update move back to kickstart now that repos are synced?
 **Question**: Now that build host (192.168.1.196) and orchestration host (Mac) are on the same repo/branch, can we move the kernel update back into the kickstart file?
 
 **Background**:
 - Previously had kernel update in kickstart (lines 101-103 in rhel9-dm-root.ks)
 - Removed it and moved to optional `update-kernel.sh` script
 - Build host was potentially on different branch/repo when kickstart was failing
-- Now both hosts are synchronized on `feature/consolidate-build-system` branch
+- Now both hosts are synchronized on main branch
 
 **Testing Required**:
 - [ ] Verify build host and Mac are on same branch/commit
@@ -21,70 +88,16 @@
 
 ---
 
-### 2. URGENT: Investigate commit 26a408e changes that broke agent-protocol-forwarder
-**Issue**: Commit 26a408e (May 6, 08:21) broke peer pod boot. The commit message says "Remove kernel removal code" but that's BACKWARDS - the working image (May 5) HAD kernel removal, the broken image (May 6) did NOT.
+### 4. RESOLVED: Commit 26a408e investigation
+**Status**: Issue was resolved by agent-config.toml fix. The missing `image_registry_auth` line was causing boot failures, not the kernel removal changes.
 
-**Root Cause Analysis Needed**:
-Commit 26a408e made these changes to `helpers/rhel9-dm-root.ks`:
-
-1. **REMOVED kernel removal code** (lines 104-110):
-   ```bash
-   OLD_KERNELS=$(rpm -q kernel-uki-virt | head -n -1)
-   if [ -n "$OLD_KERNELS" ]; then
-       OLD_VERSION=$(echo $OLD_KERNELS | sed 's/kernel-uki-virt-//')
-       dnf remove -y kernel-uki-virt-$OLD_VERSION kernel-modules-core-$OLD_VERSION
-   fi
-   ```
-
-2. **ADDED extra log cleanup**:
-   ```bash
-   rm -f /var/log/rhsm/*
-   ```
-
-3. **ADDED partition GUID fix**:
-   ```bash
-   sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
-   ```
-
-4. **ADDED UKI install speedup**:
-   ```bash
-   touch /etc/kernel/install.d/20-grub.install
-   touch /etc/kernel/install.d/50-dracut.install
-   ```
-
-**Testing Required**:
-- [ ] Revert commit 26a408e completely (restore kernel removal)
-- [ ] Test if image works
-- [ ] If it works, add back changes ONE AT A TIME:
-  - [ ] Test with just `rm -f /var/log/rhsm/*`
-  - [ ] Test with just `sfdisk --part-type` change
-  - [ ] Test with just `touch /etc/kernel/install.d/*` changes
-- [ ] Identify which specific change breaks agent-protocol-forwarder
-
-**Current Status**:
-- Reverted to working base image (May 5) on remote host
-- Ready to rebuild and test
-- Need to systematically test each change
-
-**Priority**: CRITICAL - blocking all new builds
+**Conclusion**: Kernel removal in kickstart is safe and working. The May 6 failure was due to missing agent-config.toml configuration, not kernel removal.
 
 ---
 
-### 2. Implement safe kernel removal (DEPRIORITIZED - see item 1)
-**Issue**: Need to understand if kernel removal actually breaks things or if it was another change in commit 26a408e.
+## Medium Priority
 
-**Current state**:
-- Kickstart updates kernel to fix CVE-2026-31431
-- Working image (May 5) HAD kernel removal and worked fine
-- Broken image (May 6) did NOT have kernel removal but was broken
-
-**This suggests kernel removal is NOT the problem!**
-
-**Priority**: Medium - blocked by item 1
-
----
-
-### 2. Improve Uptycs tarball handling
+### 1. Improve Uptycs tarball handling
 **Issue**: Uptycs tarballs (`scripts/coco/podvm/uptycs-*.tar.gz`) are currently NOT in `.gitignore` to allow container builds to work. This means large binary files (19MB) could be committed to git.
 
 **Current workaround**: Removed from `.gitignore` temporarily
@@ -94,11 +107,11 @@ Commit 26a408e made these changes to `helpers/rhel9-dm-root.ks`:
 - Keep them in `.gitignore` to prevent accidental commits
 - OR: Download Uptycs from a secure location during build instead of copying from local files
 
-**Priority**: High - prevents large binaries in git history
+**Priority**: Medium - prevents large binaries in git history
 
 ---
 
-### 3. Automate Red Hat upstream image tag updates
+### 2. Automate Red Hat upstream image tag updates
 **Issue**: Currently pinned to `ffb785e` tag in scripts. Need to automate checking for and updating to latest Red Hat upstream image.
 
 **Current state**:
@@ -116,9 +129,7 @@ Commit 26a408e made these changes to `helpers/rhel9-dm-root.ks`:
 
 ---
 
-## Medium Priority
-
-### 2. Optimize container rebuild strategy
+### 3. Optimize container rebuild strategy
 **Issue**: Currently using `--no-cache` for all container builds, which is slow
 
 **Desired solution**:
@@ -126,19 +137,36 @@ Commit 26a408e made these changes to `helpers/rhel9-dm-root.ks`:
 - Use build cache for dependency layers
 - Add checksum-based rebuild detection
 
+**Priority**: Medium - improves build speed
+
 ---
 
 ## Low Priority
 
-### 3. Add automated testing
+### 1. Add automated testing
 - Test that Uptycs binaries are in built images
 - Test that dm-verity is working
 - Test that images boot successfully
 
-### 4. Improve error messages
+### 2. Improve error messages
 - Better diagnostics when builds fail
 - Clear indication of which step failed
 - Suggestions for common issues
 
-### 5. Intercept this log on kickstart build better
-- "cat /home/gcoon/gits/ibm_cloud_rhel9/logs/base-image-build-20260507-090223.log
+### 3. Intercept kickstart build logs better
+- Improve log capture during base image build
+- Better error reporting from kickstart process
+
+---
+
+## Notes
+
+### Latest Validated Images (June 5, 2026)
+- **Standard**: rhel97-2026060405.qcow2 (VSI: r014-39f02efb-aabf-4784-9097-dfd7dc2477d4)
+- **Hardened**: rhel97-2026060405-hardened.qcow2 (VSI: r014-cb24353c-17a4-4360-9bb5-c2347c9ef9d7)
+- Both in working_list.txt with changelog (CHANGELOG_2026060405.md)
+
+### Current Uptycs Version
+- Version: 5.18.1.18-Uptycs-Protect (20260122)
+- Image: `us.icr.io/armada-csutil/uptycs-osquery:20260122-a7555d3b9aac00a50e4bcfb92e25eeffd57a7ad8`
+- Find latest: `cat ~/Bob-Work/ArmadaCSutil/Changelogs/prod/CHANGE_LOGS.json | grep "uptycs-osquery" | head -1`
