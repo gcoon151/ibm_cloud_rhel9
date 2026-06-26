@@ -23,3 +23,6 @@ build/*.log
 
 # IBM Cloud temporary files
 .ibm_cloud_image_id
+
+# Upstream reference repositories (cloned for reference only)
+upstream-repos/
