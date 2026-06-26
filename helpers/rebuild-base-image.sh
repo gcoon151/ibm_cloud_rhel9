@@ -143,15 +143,35 @@ step_install() {
     fi
 
     echo "Found created image: $CREATED_IMAGE"
-    echo "Size: $(du -h $CREATED_IMAGE | cut -f1)"
     echo "Created: $(stat -c %y $CREATED_IMAGE | cut -d. -f1)"
 
     # Fix permissions - virt-install creates images with 600
     echo "Setting proper permissions (644)..."
     chmod 644 "$CREATED_IMAGE"
 
+    # Sanity-check virtual size. A healthy RHEL 9.7 kickstart install produces a
+    # 3 GiB virtual disk. The on-disk (compressed) size is ~1.1-1.2 GiB and is
+    # NOT a reliable indicator — do NOT use `du` for this check.
+    # Anything under 2 GiB virtual means the install failed or was truncated.
+    VIRT_SIZE_BYTES=$(qemu-img info --output json "$CREATED_IMAGE" | python3 -c "import sys,json; print(json.load(sys.stdin)['virtual-size'])")
+    VIRT_SIZE_GIB=$(( VIRT_SIZE_BYTES / 1024 / 1024 / 1024 ))
+    DISK_SIZE_HUMAN=$(du -h "$CREATED_IMAGE" | cut -f1)
+    echo "Virtual size:  ${VIRT_SIZE_GIB} GiB  (on-disk compressed: ${DISK_SIZE_HUMAN})"
+
+    if [ "$VIRT_SIZE_GIB" -lt 2 ]; then
+        echo ""
+        echo "╔══════════════════════════════════════════════════════════════╗"
+        echo "║  ERROR: IMAGE IS TOO SMALL — INSTALL LIKELY FAILED          ║"
+        echo "║  Virtual size: ${VIRT_SIZE_GIB} GiB  (expected: 3 GiB)               ║"
+        echo "║  A healthy install produces a 3 GiB virtual disk.           ║"
+        echo "║  Check the kickstart or ISO and try again.                  ║"
+        echo "╚══════════════════════════════════════════════════════════════╝"
+        rm -f "$CREATED_IMAGE"
+        exit 1
+    fi
+
     echo ""
-    echo "✓ Install complete: $CREATED_IMAGE"
+    echo "✓ Install complete: $CREATED_IMAGE  (${VIRT_SIZE_GIB} GiB virtual)"
     echo ""
 }
 
