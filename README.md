@@ -53,7 +53,8 @@ The purpose of this script is to take a disk and:
 Options (define them as variable):
 IMAGE_CERTIFICATE_DER:      optional  - certificate in DER format to upload in the gallery. Default: generate a new one
 IMAGE_CERTIFICATE_PEM:      optional  - certificate in PEM format to upload in the gallery. Default: generate a new one
-IMAGE_PRIVATE_KEY:          optional   - key to sign the verity cmdline addon. Default: generate a new one
+IMAGE_PRIVATE_KEY:          optional   - key to sign the verity cmdline addon. 
+IMAGE_TYPE:                 optional   - Possible Image type are ibm-openshift or blank"
 SB_CERT_NAME:               optional   - name of the secureboot certificate added into the gallery. Default: My custom certificate
 WORK_FOLDER:                optional   - where to create artifacts. Defaults to a temp folder in /tmp
 

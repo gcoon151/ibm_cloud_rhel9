@@ -8,6 +8,7 @@ INPUT_IMAGE=$1
 here=`pwd`
 SCRIPT_FOLDER=$(dirname $0)
 SCRIPT_FOLDER=$(realpath $SCRIPT_FOLDER)
+IBM_SCRIPT_FOLDER="$SCRIPT_FOLDER/../ibmcloud"
 
 function local_help()
 {
@@ -22,6 +23,7 @@ function local_help()
     echo "Options (define them as variable):"
     echo "IMAGE_CERTIFICATE_PEM:      optional  - certificate in PEM format to upload in the gallery"
     echo "IMAGE_PRIVATE_KEY:          optional  - key to sign the verity cmdline addon"
+    echo "IMAGE_TYPE:                 optional  -  Posible image tyoes is ibm-openshift or empty"
     echo "WORK_FOLDER:                optional   - where to create artifacts. Defaults to a temp folder in /tmp"
     echo ""
     echo "Verity options (define them as variable):"
@@ -155,6 +157,11 @@ if [ "${UPDATE_KERNEL:-false}" = "true" ]; then
     export ACTIVATION_KEY
     "$SCRIPT_FOLDER/update-kernel.sh" "$INPUT_IMAGE"
     echo ""
+fi
+
+if [ "${IMAGE_TYPE:-}" = "ibm-openshift" ]; then
+    echo "Applying ibm-openshift image customization - disk partitioning"
+    "$IBM_SCRIPT_FOLDER/openshift-rhel9-image-ks.sh"
 fi
 
 echo "Applying CoCo guest components..."

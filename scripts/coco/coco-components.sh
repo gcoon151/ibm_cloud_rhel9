@@ -124,6 +124,12 @@ export LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
 # NOTE: Kernel removal disabled - breaks agent-protocol-forwarder
 # See TODO.md for future kernel cleanup work
 
+IBM_SCRIPT_FOLDER="$SCRIPT_FOLDER/../ibmcloud"
+IMAGE_CUSTOMIZE_RUN_ARGS=""
+if [ "${IMAGE_TYPE:-}" = "ibm-openshift" ]; then
+    IMAGE_CUSTOMIZE_RUN_ARGS="--run $IBM_SCRIPT_FOLDER/openshift-rhel9-image-customise.sh"
+fi
+
 virt-customize \
     --copy-in $ARTIFACTS_FOLDER/podvm-binaries.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/pause-bundle.tar.gz:/tmp/ \
@@ -133,6 +139,7 @@ virt-customize \
     --run $ARTIFACTS_FOLDER/podvm_maker.sh \
     ${UPTYCS_RUN_ARGS} \
     ${METRICS_RUN_ARGS} \
+    ${IMAGE_CUSTOMIZE_RUN_ARGS} \
     --uninstall WALinuxAgent \
     ${EXTRA_ARGS} \
     -a $INPUT_IMAGE
