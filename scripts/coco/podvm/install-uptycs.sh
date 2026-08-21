@@ -58,6 +58,47 @@ if [ ! -f /tmp/uptycs-complete.tar.gz ]; then
 fi
 echo "✓ Found uptycs-complete.tar.gz"
 
+# Validate tarball contents BEFORE extracting — fail fast if required files
+# are missing rather than silently skipping them at install time.
+echo "[STEP 3b/10] Validating tarball contents..."
+TARBALL_CONTENTS=$(tar -tzf /tmp/uptycs-complete.tar.gz --exclude='._*' 2>/dev/null)
+
+REQUIRED_IN_TAR=(
+    "bin/osqueryd"
+    "bin/uptycs-protect"
+    "bin/uptycs-nft"
+    "bin/bpf_progs.o"
+    "bin/uptycs_audit_conf.sh"
+)
+TAR_MISSING=0
+for required in "${REQUIRED_IN_TAR[@]}"; do
+    if echo "$TARBALL_CONTENTS" | grep -q "$required"; then
+        echo "  ✓ $required"
+    else
+        echo "  ✗ MISSING: $required"
+        TAR_MISSING=$((TAR_MISSING + 1))
+    fi
+done
+
+# Locate ca.crt — path may vary between tarball versions
+CA_CRT_IN_TAR=$(echo "$TARBALL_CONTENTS" | grep -E "ca\.crt$" | head -1)
+if [ -n "$CA_CRT_IN_TAR" ]; then
+    echo "  ✓ ca.crt found at: $CA_CRT_IN_TAR"
+else
+    echo "  ✗ MISSING: ca.crt (TLS enrollment will fail without this)"
+    TAR_MISSING=$((TAR_MISSING + 1))
+fi
+
+if [ "$TAR_MISSING" -gt 0 ]; then
+    echo ""
+    echo "✗ ERROR: $TAR_MISSING required file(s) missing from tarball"
+    echo "Full tarball contents:"
+    echo "$TARBALL_CONTENTS"
+    exit 1
+fi
+echo "✓ Tarball contents validated"
+echo ""
+
 # Extract to /tmp (tar extracts to flat structure: bin/, etc/)
 echo "[STEP 4/10] Extracting Uptycs package..."
 cd /tmp
