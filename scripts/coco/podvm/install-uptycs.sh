@@ -114,17 +114,30 @@ echo "✓ Binary verification complete"
 echo ""
 
 # Install CA certificate for TLS verification
+# The tarball extracts ca.crt to /tmp/etc/osquery/cert/ca.crt
+# Fall back to /tmp/etc/ca.crt in case of a differently packaged tarball
 echo "[STEP 8/10] Installing CA certificate..."
-if [ -f "/tmp/etc/ca.crt" ]; then
-    # Create a temporary location for the cert (will be copied to /etc/osquery at runtime)
+echo "  Tarball cert paths found:"
+find /tmp/etc -name "ca.crt" 2>/dev/null | sort || echo "  (none)"
+CA_CERT_SRC=""
+for candidate in "/tmp/etc/osquery/cert/ca.crt" "/tmp/etc/ca.crt"; do
+    if [ -f "$candidate" ]; then
+        CA_CERT_SRC="$candidate"
+        break
+    fi
+done
+if [ -n "$CA_CERT_SRC" ]; then
     mkdir -p /usr/share/osquery/certs
-    cp "/tmp/etc/ca.crt" /usr/share/osquery/certs/ca.crt
+    cp "$CA_CERT_SRC" /usr/share/osquery/certs/ca.crt
     chmod 644 /usr/share/osquery/certs/ca.crt
-    echo "✓ CA certificate installed to /usr/share/osquery/certs/ca.crt"
-    echo "  (will be copied to /etc/osquery/ca.crt at runtime)"
+    echo "✓ CA certificate installed from $CA_CERT_SRC to /usr/share/osquery/certs/ca.crt"
+    echo "  (will be copied to /etc/osquery/ca.crt at runtime by provision-uptycs.sh)"
 else
-    echo "⚠ WARNING: CA certificate not found in /tmp/etc/"
-    echo "TLS enrollment may fail without proper certificates"
+    echo "✗ ERROR: CA certificate not found in tarball"
+    echo "  Checked: /tmp/etc/osquery/cert/ca.crt, /tmp/etc/ca.crt"
+    echo "  Full /tmp/etc/ contents:"
+    find /tmp/etc -type f 2>/dev/null | sort || true
+    exit 1
 fi
 echo ""
 
