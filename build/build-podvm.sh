@@ -211,7 +211,21 @@ build_qcow2() {
     # Clone base QCOW2 image
     dir="/home/gcoon/.local/share/libvirt/images"
     src="${dir}/rhel97-ks-READONLY.qcow2"
-    
+
+    # Pre-flight: verify directory is writable before doing any work
+    if [ ! -d "$dir" ]; then
+        log_error "libvirt images directory not found: $dir"
+        log_error "Run: mkdir -p $dir"
+        exit 1
+    fi
+    if [ ! -w "$dir" ]; then
+        log_error "libvirt images directory is not writable: $dir"
+        log_error "This commonly happens after a reboot. Fix with:"
+        log_error "  sudo chown -R gcoon:gcoon $dir && chmod -R u+rw $dir"
+        log_error "Or from laptop: ./scripts/fix-permissions-after-reboot.sh"
+        exit 1
+    fi
+
     if [ ! -f "$src" ]; then
         log_error "Base QCOW2 not found: $src"
         exit 1
