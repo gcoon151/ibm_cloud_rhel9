@@ -32,6 +32,40 @@
 
 ## High Priority
 
+### 0. UPSTREAM FIX NEEDED: peer-pods-webhook failurePolicy causes cluster networking deadlock
+**Issue**: The OSC `peer-pods-webhook` mutating admission webhook uses `failurePolicy: Fail`
+and no namespace/object selector to exclude CNI system namespaces. This creates a
+circular deadlock after worker node replacement: calico-node pods can't be created
+because the webhook is unreachable, and the webhook is unreachable because calico-node
+hasn't started yet.
+
+**Impact**: Every worker node replacement or cluster restart with OSC installed risks
+all nodes becoming permanently `NotReady` until manual intervention.
+
+**Workaround** (documented in `docs/CLUSTER_NETWORKING_DEADLOCK.md`):
+```bash
+oc patch mutatingwebhookconfiguration mutating-webhook-configuration \
+  --type='json' -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]'
+oc rollout restart daemonset/calico-node -n calico-system
+# restore after nodes are Ready:
+oc patch mutatingwebhookconfiguration mutating-webhook-configuration \
+  --type='json' -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]'
+```
+
+**Upstream fix**: The webhook should either:
+1. Use `failurePolicy: Ignore` (simplest — the webhook only annotates, doesn't gate)
+2. Add `namespaceSelector` to exclude `calico-system`, `openshift-ovn-kubernetes`, etc.
+3. Add `objectSelector` scoped to pods requesting `kata.peerpods.io/vm` resource
+
+**Tasks**:
+- [ ] File issue against `openshift-sandboxed-containers-operator` upstream
+- [ ] Submit PR changing `failurePolicy` to `Ignore` with justification
+- [ ] Reference `docs/CLUSTER_NETWORKING_DEADLOCK.md` in the issue
+
+**Priority**: High - silent cluster-breaking failure on every worker rotation
+
+---
+
 ### 1. RHEL 9.8 Base Image for CVE Fixes
 **Goal**: Update base image to RHEL 9.8 to pull in critical CVE fixes.
 
