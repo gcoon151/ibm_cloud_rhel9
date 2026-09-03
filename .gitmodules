@@ -16,3 +16,6 @@
 [submodule "upstream-repos/sandboxed-containers-operator"]
 	path = upstream-repos/sandboxed-containers-operator
 	url = https://github.com/openshift/sandboxed-containers-operator.git
+[submodule "upstream-repos/trustee"]
+	path = upstream-repos/trustee
+	url = https://github.com/openshift/trustee.git
