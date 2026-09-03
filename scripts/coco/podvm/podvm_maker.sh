@@ -5,13 +5,23 @@ dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStrea
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
 
-# Patch agent-config.toml: Red Hat's payload only has 2 lines, we need to add image_registry_auth
-echo "Patching agent-config.toml to add image_registry_auth..."
+# Patch agent-config.toml: Red Hat's payload only has 2 lines; we add 3 more.
+# enable_signature_verification + image_policy_file enable runtime image signing enforcement.
+# The policy is fetched live from KBS (kbs:// URI) — nothing policy-related is baked into the image.
+# Reference: openshift/sandboxed-containers-operator commits 1e866548 + 695b311c
+echo "Patching agent-config.toml..."
 if ! grep -q "image_registry_auth" /etc/agent-config.toml; then
     echo 'image_registry_auth = "file:///run/peerpod/auth.json"' >> /etc/agent-config.toml
     echo "✓ Added image_registry_auth to agent-config.toml"
 else
     echo "✓ image_registry_auth already present in agent-config.toml"
+fi
+if ! grep -q "enable_signature_verification" /etc/agent-config.toml; then
+    echo 'enable_signature_verification = true' >> /etc/agent-config.toml
+    echo 'image_policy_file = "kbs:///default/image-policy/policy.json"' >> /etc/agent-config.toml
+    echo "✓ Added enable_signature_verification + image_policy_file to agent-config.toml"
+else
+    echo "✓ enable_signature_verification already present in agent-config.toml"
 fi
 
 # set luks
