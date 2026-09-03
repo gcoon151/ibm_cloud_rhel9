@@ -1,3 +1,18 @@
 [submodule "cloud-api-adaptor"]
 	path = cloud-api-adaptor
 	url = https://github.com/openshift/cloud-api-adaptor.git
+[submodule "upstream-repos/trustee-operator"]
+	path = upstream-repos/trustee-operator
+	url = https://github.com/openshift/trustee-operator.git
+[submodule "upstream-repos/cloud-api-adaptor"]
+	path = upstream-repos/cloud-api-adaptor
+	url = https://github.com/openshift/cloud-api-adaptor.git
+[submodule "upstream-repos/confidential-compute-artifacts"]
+	path = upstream-repos/confidential-compute-artifacts
+	url = https://github.com/openshift/confidential-compute-artifacts.git
+[submodule "upstream-repos/kata-containers"]
+	path = upstream-repos/kata-containers
+	url = https://github.com/openshift/kata-containers.git
+[submodule "upstream-repos/sandboxed-containers-operator"]
+	path = upstream-repos/sandboxed-containers-operator
+	url = https://github.com/openshift/sandboxed-containers-operator.git
