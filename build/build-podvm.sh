@@ -41,7 +41,7 @@ fi
 # Configuration - environment variables passed from remote-build.sh take precedence over .env
 ORG_ID="${ORG_ID:-}"
 ACTIVATION_KEY="${ACTIVATION_KEY:-}"
-PAYLOAD_TAG="${CMD_PODVM_TAG:-${PODVM_TAG:-ffb785e}}"  # Command-line > .env > default
+PAYLOAD_TAG="${CMD_PODVM_TAG:-${PODVM_TAG:-1.10.3}}"  # Command-line > .env > default (last RHEL9-glibc2.34-compatible release)
 PAYLOAD_IMAGE="registry.redhat.io/openshift-sandboxed-containers/osc-podvm-payload-rhel9:${PAYLOAD_TAG}"
 SSHD_SERVICE="${CMD_SSHD_SERVICE:-${SSHD_SERVICE:-true}}"  # Command-line > .env > default
 APPLY_VERITY="${CMD_APPLY_VERITY:-${APPLY_VERITY:-false}}"  # Command-line > .env > default
