@@ -32,7 +32,27 @@
 
 ## High Priority
 
-### 0. UPSTREAM FIX NEEDED: peer-pods-webhook failurePolicy causes cluster networking deadlock
+### 0. UPSTREAM FIX NEEDED: osc-rpm-install only reloads CRI-O instead of restarting CRI-O and Kubelet after drop-in config placement
+**Issue**: After worker node replacement or security updates, `osc-rpm-install` places drop-in configuration files in `/etc/crio/crio.conf.d/` (such as `50-kata-remote`) and executes `systemctl reload crio`. However, CRI-O does not register new `[crio.runtime.runtimes.*]` runtime handlers on SIGHUP/reload, and `kubelet` continues caching the previous runtime list (`map[crun:... runc:...]`).
+**Impact**: All pods using `runtimeClassName: kata-remote` immediately fail on new/rotated workers with:
+`Failed to create pod sandbox: rpc error: code = Unknown desc = failed to find runtime handler kata-remote from runtime list map[crun:... runc:...]`
+**Workaround** (documented in `docs/WORKER_ROTATION_CRIO_RUNTIME_BUG.md`):
+```bash
+for pod in $(oc get pods -n openshift-sandboxed-containers-operator -l name=osc-rpm-install -o jsonpath='{.items[*].metadata.name}'); do
+  oc exec -n openshift-sandboxed-containers-operator "$pod" -c kata-install -- chroot /host /bin/bash -c "systemctl restart crio && systemctl restart kubelet"
+done
+```
+**Upstream fix**:
+In the OSC installation daemonset / script, after staging RPMs and writing `/etc/crio/crio.conf.d/` files, invoke `systemctl restart crio && systemctl restart kubelet` instead of `systemctl reload crio`.
+
+**Tasks**:
+- [ ] File issue against `openshift-sandboxed-containers-operator` upstream
+- [ ] Submit PR fixing post-install hook to restart CRI-O and Kubelet
+- [ ] Reference `docs/WORKER_ROTATION_CRIO_RUNTIME_BUG.md` in the issue
+
+---
+
+### 1. UPSTREAM FIX NEEDED: peer-pods-webhook failurePolicy causes cluster networking deadlock
 **Issue**: The OSC `peer-pods-webhook` mutating admission webhook uses `failurePolicy: Fail`
 and no namespace/object selector to exclude CNI system namespaces. This creates a
 circular deadlock after worker node replacement: calico-node pods can't be created
