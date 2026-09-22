@@ -6,7 +6,14 @@ This directory contains clones of the upstream OpenShift repositories that are u
 
 According to Red Hat developers, these are the main repositories they build from:
 
-1. **sandboxed-containers-operator** - https://github.com/openshift/sandboxed-containers-operator.git
+1. **confidential-containers-guest-components** - https://github.com/openshift/confidential-containers-guest-components.git
+   - Red Hat fork of `confidential-containers/guest-components`
+   - Contains: attestation-agent, confidential-data-hub, api-server-rest, image-rs
+   - Branch naming: `osc-release-v1.10`, `osc-release-v1.11`, etc. mirrors OSC release branches
+   - Commit hashes in this repo are what binaries embed (NOT upstream guest-components hashes)
+   - Currently pinned to: `osc-release-v1.10` tip (`0bcc8fa5`) = upstream guest-components **v0.13**
+
+2. **sandboxed-containers-operator** - https://github.com/openshift/sandboxed-containers-operator.git
    - Operator
    - Must-gather
    - PodVM builder

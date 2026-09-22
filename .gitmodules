@@ -19,3 +19,6 @@
 [submodule "upstream-repos/trustee"]
 	path = upstream-repos/trustee
 	url = https://github.com/openshift/trustee.git
+[submodule "upstream-repos/confidential-containers-guest-components"]
+	path = upstream-repos/confidential-containers-guest-components
+	url = https://github.com/openshift/confidential-containers-guest-components.git
