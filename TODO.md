@@ -52,15 +52,24 @@ In the OSC installation daemonset / script, after staging RPMs and writing `/etc
 
 ---
 
-### 1. UPSTREAM FIX NEEDED: peer-pods-webhook failurePolicy causes cluster networking deadlock
-**Issue**: The OSC `peer-pods-webhook` mutating admission webhook uses `failurePolicy: Fail`
-and no namespace/object selector to exclude CNI system namespaces. This creates a
-circular deadlock after worker node replacement: calico-node pods can't be created
-because the webhook is unreachable, and the webhook is unreachable because calico-node
-hasn't started yet.
+### 1. UPSTREAM FIX NEEDED: peer-pods-webhook causes cluster networking deadlock on IBM Cloud ROKS (Calico)
 
-**Impact**: Every worker node replacement or cluster restart with OSC installed risks
-all nodes becoming permanently `NotReady` until manual intervention.
+**Issue**: The OSC `peer-pods-webhook` mutating admission webhook uses `failurePolicy: Fail`
+and its `namespaceSelector` exclusion list is missing the Calico/Tigera namespaces
+(`calico-system`, `calico-apiserver`, `tigera-operator`) used on IBM Cloud ROKS. This
+creates a circular deadlock after any worker node replacement or CRI-O restart: calico-node
+pods can't be created because the webhook is unreachable, and the webhook is unreachable
+because calico-node hasn't started yet.
+
+Confirmed live on `coon-cluster2` (2026-09-22):
+```bash
+oc get mutatingwebhookconfiguration mutating-webhook-configuration -o yaml | grep -E "calico|tigera"
+# Output: (empty — none of these namespaces are excluded)
+```
+
+**Impact**: Every worker node replacement, reboot, or CRI-O restart with OSC installed
+risks all Calico nodes becoming permanently stuck until manual intervention. This affects
+every IBM Cloud ROKS cluster running OSC with Calico CNI.
 
 **Workaround** (documented in `docs/CLUSTER_NETWORKING_DEADLOCK.md`):
 ```bash
@@ -72,17 +81,30 @@ oc patch mutatingwebhookconfiguration mutating-webhook-configuration \
   --type='json' -p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]'
 ```
 
-**Upstream fix**: The webhook should either:
-1. Use `failurePolicy: Ignore` (simplest — the webhook only annotates, doesn't gate)
-2. Add `namespaceSelector` to exclude `calico-system`, `openshift-ovn-kubernetes`, etc.
-3. Add `objectSelector` scoped to pods requesting `kata.peerpods.io/vm` resource
+**Two upstream contributions needed**:
+
+1. **`failurePolicy: Fail` → `failurePolicy: Ignore`** (primary fix)
+   - The webhook is a best-effort annotator, not a security gate. Blocking pod creation
+     on webhook failure is semantically wrong. `Ignore` is the correct value.
+   - Repo: `openshift/sandboxed-containers-operator`
+   - Search for `failurePolicy` in the operator source / Helm templates / reconcile loop
+   - Reference: `docs/CLUSTER_NETWORKING_DEADLOCK.md`
+
+2. **Add Calico/Tigera namespaces to `namespaceSelector`** (defence-in-depth fix)
+   - Add `calico-system`, `calico-apiserver`, `tigera-operator`, `ibm-system` to the
+     `NotIn` exclusion list in the `MutatingWebhookConfiguration` manifest
+   - Ideally make the list CNI-aware or comprehensive across OVN-K, Calico, Cilium
 
 **Tasks**:
-- [ ] File issue against `openshift-sandboxed-containers-operator` upstream
-- [ ] Submit PR changing `failurePolicy` to `Ignore` with justification
-- [ ] Reference `docs/CLUSTER_NETWORKING_DEADLOCK.md` in the issue
+- [ ] File issue against `openshift/sandboxed-containers-operator` upstream referencing
+      `docs/CLUSTER_NETWORKING_DEADLOCK.md` and `docs/WORKER_ROTATION_CRIO_RUNTIME_BUG.md`
+- [ ] Locate where `MutatingWebhookConfiguration` is rendered in the OSC operator source
+      (search `ibm_cloud_rhel9/upstream-repos/sandboxed-containers-operator` for `failurePolicy`)
+- [ ] Submit PR 1: change `failurePolicy: Fail` → `failurePolicy: Ignore` with justification
+- [ ] Submit PR 2: add `calico-system`, `calico-apiserver`, `tigera-operator`, `ibm-system`
+      to the `namespaceSelector` `NotIn` list
 
-**Priority**: High - silent cluster-breaking failure on every worker rotation
+**Priority**: High — breaks every IBM Cloud ROKS cluster running OSC on every worker rotation
 
 ---
 
