@@ -118,7 +118,7 @@ echo ""
 echo "--- Step 4: Running CoCo + Uptycs overlay ---"
 podman login registry.redhat.io --username "${RH_USERNAME}" --password "${RH_PASSWORD}"
 
-cp "${BASE_QCOW2}" "${OUTPUT_QCOW2}"
+[[ "${BASE_QCOW2}" != "${OUTPUT_QCOW2}" ]] && cp "${BASE_QCOW2}" "${OUTPUT_QCOW2}"
 
 podman run --rm \
     --privileged \
