@@ -49,9 +49,8 @@ COCO_SCRIPTS_DIR="${REPO_ROOT}/rhel10-experimental/coco-podvm-scripts"
 COS_BUCKET="coon-coco-us-east"
 COS_REGION="us-east"
 
-# Validate required vars
+# Validate required vars (IBMCLOUD_API_KEY only needed for upload step, not the overlay itself)
 MISSING=()
-[[ -z "${IBMCLOUD_API_KEY:-}" ]] && MISSING+=("IBMCLOUD_API_KEY")
 [[ -z "${RH_USERNAME:-}" ]]      && MISSING+=("RH_USERNAME")
 [[ -z "${RH_PASSWORD:-}" ]]      && MISSING+=("RH_PASSWORD")
 [[ -z "${ORG_ID:-}" ]]           && MISSING+=("ORG_ID")
