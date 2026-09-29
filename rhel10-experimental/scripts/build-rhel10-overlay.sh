@@ -91,11 +91,11 @@ if [[ ! -d "${COCO_SCRIPTS_DIR}" ]]; then
     git clone https://github.com/confidential-devhub/coco-podvm-scripts.git "${COCO_SCRIPTS_DIR}"
 fi
 # Overlay our IBM-specific scripts
-cp "${REPO_ROOT}/ibm_cloud_rhel9/scripts/coco/podvm/podvm_maker.sh"   "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
-cp "${REPO_ROOT}/ibm_cloud_rhel9/scripts/coco/podvm/install-uptycs.sh"   "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
-cp "${REPO_ROOT}/ibm_cloud_rhel9/scripts/coco/podvm/provision-uptycs.sh" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+cp "${REPO_ROOT}/scripts/coco/podvm/podvm_maker.sh"   "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+cp "${REPO_ROOT}/scripts/coco/podvm/install-uptycs.sh"   "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+cp "${REPO_ROOT}/scripts/coco/podvm/provision-uptycs.sh" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
 mkdir -p "${COCO_SCRIPTS_DIR}/services"
-cp "${REPO_ROOT}/ibm_cloud_rhel9/services/uptycs-osquery.service" "${COCO_SCRIPTS_DIR}/services/"
+cp "${REPO_ROOT}/services/uptycs-osquery.service" "${COCO_SCRIPTS_DIR}/services/"
 echo "✓ IBM overlay scripts copied"
 
 # ---------------------------------------------------------------------------
