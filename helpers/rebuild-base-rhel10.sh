@@ -6,7 +6,13 @@
 # Deviations: see rhel10-experimental/UPSTREAM_DEVIATIONS.md
 #
 # Produces a date-stamped, read-only base QCOW2:
-#   ~/.local/share/libvirt/images/rhel10-ks-base-YYYYMMDD.qcow2
+#   /tmp/rhel10-ks-base-YYYYMMDD.qcow2
+#
+# Why /tmp and not ~/.local/share/libvirt/images/:
+#   virt-install uses qemu:///system (needed for KVM access — gcoon is in
+#   libvirt group but not kvm group). The system QEMU daemon runs as uid 64055
+#   (libvirt-qemu) which cannot access /home/gcoon. /tmp is world-accessible.
+#   This matches all prior successful builds. See UPSTREAM_DEVIATIONS.md.
 #
 # This file is NEVER modified after creation. The overlay script (Layer 3)
 # copies it to a dated output path and modifies the copy. Do not pass a base
@@ -17,14 +23,15 @@
 #   bash helpers/rebuild-base-rhel10.sh --iso /path/to/rhel-10.2-x86_64-dvd.iso
 #
 # The script exits non-zero and does nothing if a base for today already exists.
-# To force a rebuild, remove or rename the existing dated file first.
+# To force a rebuild on the same day, remove the existing dated file first.
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-IMAGE_DIR="${HOME}/.local/share/libvirt/images"
+# Output goes to /tmp so qemu:///system (uid libvirt-qemu) can access it.
+IMAGE_DIR="/tmp"
 KS_FILE="${SCRIPT_DIR}/rhel10-dm-root.ks"
 DATE=$(date -u +%Y%m%d)
 OUTPUT_IMAGE="${IMAGE_DIR}/rhel10-ks-base-${DATE}.qcow2"
@@ -74,9 +81,9 @@ fi
 
 mkdir -p "${IMAGE_DIR}"
 
-# Use the user session libvirt URI so the QCOW2 can live in $HOME.
-# qemu:///system runs as uid 64055 (libvirt-qemu) which cannot access /home/gcoon.
-export LIBVIRT_DEFAULT_URI="qemu:///session"
+# Use qemu:///system for KVM access (gcoon is in libvirt but not kvm group).
+# Output is in /tmp which is world-accessible to the libvirt-qemu uid.
+export LIBVIRT_DEFAULT_URI="qemu:///system"
 
 # Clean up any leftover VM with the same name from a previous failed run
 virsh destroy "${VM_NAME}" 2>/dev/null || true
@@ -89,7 +96,7 @@ echo "This takes 15-25 minutes. The VM will power off when done."
 echo ""
 
 virt-install \
-    --connect qemu:///session \
+    --connect qemu:///system \
     --virt-type kvm \
     --os-variant rhel10.0 \
     --arch x86_64 \
