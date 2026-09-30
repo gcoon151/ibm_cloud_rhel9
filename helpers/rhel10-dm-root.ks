@@ -33,10 +33,10 @@ keyboard --vckeymap=us --xlayouts='us'
 # System language
 lang en_US.UTF-8
 
-# Network — disabled. No DHCP server is available on the KVM build host bridge.
-# Anaconda would hang for 60-90s on DHCP timeout if left as dhcp.
+# Network — dhcp. Anaconda 40 on RHEL 10.2 does not accept bootproto=none.
+# DHCP may time out (60-90s) but Anaconda proceeds without it.
 # peer pod VMs get their network config from cloud-init/afterburn at runtime.
-network --bootproto=none --hostname=localhost.localdomain --no-activate
+network --bootproto=dhcp --hostname=localhost.localdomain
 firewall --disabled
 
 # AppStream repo from CDROM — required so Anaconda can resolve packages
