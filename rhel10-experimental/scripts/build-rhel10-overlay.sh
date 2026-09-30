@@ -9,7 +9,6 @@
 #   ./rhel10-experimental/scripts/build-rhel10-overlay.sh <path-to-base.qcow2>
 #
 # Required env vars (or set in .env at repo root):
-#   IBMCLOUD_API_KEY   IBM Cloud API key for COS upload + VSI image creation
 #   RH_USERNAME        registry.redhat.io username
 #   RH_PASSWORD        registry.redhat.io password
 #   ORG_ID             Red Hat org ID for subscription-manager
@@ -49,7 +48,7 @@ COCO_SCRIPTS_DIR="${REPO_ROOT}/rhel10-experimental/coco-podvm-scripts"
 COS_BUCKET="coon-coco-us-east"
 COS_REGION="us-east"
 
-# Validate required vars (IBMCLOUD_API_KEY only needed for upload step, not the overlay itself)
+# Validate required vars
 MISSING=()
 [[ -z "${RH_USERNAME:-}" ]]      && MISSING+=("RH_USERNAME")
 [[ -z "${RH_PASSWORD:-}" ]]      && MISSING+=("RH_PASSWORD")
@@ -67,20 +66,29 @@ echo "  Payload tag: $PAYLOAD_TAG"
 echo "  SSHD:        $SSHD_SERVICE"
 echo "================================================================="
 
+# Verify host tools
+for tool in sgdisk qemu-img qemu-nbd guestfish; do
+    command -v "$tool" &>/dev/null || { echo "ERROR: $tool not found on host" >&2; exit 1; }
+done
+
 # ---------------------------------------------------------------------------
-# STEP 1: Verify partition GUID on base QCOW2
+# STEP 1: Verify partition GUIDs on base QCOW2 (hard stop — never auto-fix)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- Step 1: Verifying partition GUID ---"
+echo "--- Step 1: Verifying partition GUIDs ---"
 RAW_TMP=$(mktemp /tmp/rhel10-check-XXXXXX.raw)
 qemu-img convert -f qcow2 -O raw "${BASE_QCOW2}" "${RAW_TMP}"
-ROOT_GUID=$(sfdisk -d "${RAW_TMP}" 2>/dev/null | grep -E 'part[23]' | grep -o 'type=[0-9A-Fa-f-]*' | cut -d= -f2 | grep -i "4F68BCE3" || true)
+ROOT_GUID=$(sfdisk -d "${RAW_TMP}" 2>/dev/null | grep -i "type=4F68BCE3" || true)
+EFI_GUID=$(sfdisk  -d "${RAW_TMP}" 2>/dev/null | grep -i "type=C12A7328" || true)
 rm -f "${RAW_TMP}"
-if [[ -z "${ROOT_GUID}" ]]; then
-    echo "⚠ Root partition GUID may be wrong — will fix via virt-customize in overlay"
-else
-    echo "✓ Root partition GUID correct (4F68BCE3...)"
+if [[ -z "${ROOT_GUID}" || -z "${EFI_GUID}" ]]; then
+    echo "ERROR: Partition GUIDs wrong in base QCOW2 — this is a kickstart problem, not fixable here." >&2
+    echo "  Root GUID (4F68BCE3) found: ${ROOT_GUID:-MISSING}" >&2
+    echo "  EFI GUID  (C12A7328) found: ${EFI_GUID:-MISSING}" >&2
+    exit 1
 fi
+echo "✓ EFI partition GUID correct (C12A7328...)"
+echo "✓ Root partition GUID correct (4F68BCE3...)"
 
 # ---------------------------------------------------------------------------
 # STEP 2: Prepare coco-podvm-scripts with our IBM overlays
@@ -90,10 +98,12 @@ echo "--- Step 2: Preparing coco-podvm-scripts ---"
 if [[ ! -d "${COCO_SCRIPTS_DIR}" ]]; then
     git clone https://github.com/confidential-devhub/coco-podvm-scripts.git "${COCO_SCRIPTS_DIR}"
 fi
-# Overlay our IBM-specific scripts
-cp "${REPO_ROOT}/scripts/coco/podvm/podvm_maker.sh"   "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+cp "${REPO_ROOT}/scripts/coco/podvm/podvm_maker.sh"      "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+cp "${REPO_ROOT}/scripts/coco/podvm/script-disk-mods.sh" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
 cp "${REPO_ROOT}/scripts/coco/podvm/install-uptycs.sh"   "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
 cp "${REPO_ROOT}/scripts/coco/podvm/provision-uptycs.sh" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+# example_run.sh — adds -v /boot:/boot:ro and -v /dev:/dev (fixes supermin kernel lookup on Ubuntu)
+cp "${REPO_ROOT}/scripts/coco/podvm/example_run.sh"      "${COCO_SCRIPTS_DIR}/"
 mkdir -p "${COCO_SCRIPTS_DIR}/services"
 cp "${REPO_ROOT}/services/uptycs-osquery.service" "${COCO_SCRIPTS_DIR}/services/"
 echo "✓ IBM overlay scripts copied"
@@ -112,34 +122,40 @@ podman build -t coco-podvm \
 echo "✓ Container built"
 
 # ---------------------------------------------------------------------------
-# STEP 4: Login to registry and run overlay
+# STEP 4: Run CoCo + Uptycs overlay via example_run.sh
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Step 4: Running CoCo + Uptycs overlay ---"
 podman login registry.redhat.io --username "${RH_USERNAME}" --password "${RH_PASSWORD}"
 
-[[ "${BASE_QCOW2}" != "${OUTPUT_QCOW2}" ]] && cp "${BASE_QCOW2}" "${OUTPUT_QCOW2}"
+cp "${BASE_QCOW2}" "${OUTPUT_QCOW2}"
 
-podman run --rm \
-    --privileged \
-    -v "${OUTPUT_QCOW2}:/disk.qcow2" \
-    -v /lib/modules:/lib/modules:ro,Z \
-    -v /boot:/boot:ro \
-    -v /dev:/dev \
-    --user 0 \
-    --security-opt=apparmor=unconfined \
-    --security-opt=seccomp=unconfined \
-    --mount type=bind,source=/dev,target=/dev \
-    --mount type=bind,source=/run/udev,target=/run/udev \
-    -e PODVM_BINARY="registry.redhat.io/openshift-sandboxed-containers/osc-podvm-payload-rhel9:${PAYLOAD_TAG}" \
-    -e NVIDIA_DRIVER_VERSION="" \
-    -e SSHD_SERVICE="${SSHD_SERVICE}" \
-    localhost/coco-podvm
+export QCOW2="${OUTPUT_QCOW2}"
+export PODVM_BINARY="registry.redhat.io/openshift-sandboxed-containers/osc-podvm-payload-rhel9:${PAYLOAD_TAG}"
+export SSHD_SERVICE="${SSHD_SERVICE}"
+export NVIDIA_DRIVER_VERSION=""
+
+cd "${COCO_SCRIPTS_DIR}"
+bash example_run.sh "${OUTPUT_QCOW2}"
+cd "${REPO_ROOT}"
 
 echo "✓ Overlay complete: ${OUTPUT_QCOW2}"
 qemu-img info "${OUTPUT_QCOW2}"
 
+# ---------------------------------------------------------------------------
+# STEP 5: Mandatory local verification — ALL checks must pass before upload
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Step 5: Local QCOW2 verification (must pass before upload) ---"
+VERIFY_SCRIPT="${REPO_ROOT}/scripts/verify-qcow2.sh"
+if [[ ! -f "${VERIFY_SCRIPT}" ]]; then
+    echo "ERROR: verify-qcow2.sh not found at ${VERIFY_SCRIPT}" >&2; exit 1
+fi
+bash "${VERIFY_SCRIPT}" "${OUTPUT_QCOW2}"
+
+echo ""
+echo "✓ All verification checks passed. Ready to upload."
 echo ""
 echo "Next steps:"
-echo "  Upload: ibmcloud cos upload --bucket ${COS_BUCKET} --key $(basename ${OUTPUT_QCOW2}) --file ${OUTPUT_QCOW2} --region ${COS_REGION}"
+echo "  Upload: COS_CRN='crn:v1:bluemix:public:cloud-object-storage:global:a/f76e4b9f3bad41c0b0238b5dd9702765:2d070509-7cea-4713-a3d3-2c8845a4e466::' bash ~/.local/share/libvirt/images/upload_hl_dev_cos_bucket.sh ${OUTPUT_QCOW2}"
 echo "  Then:   ibmcloud is image-create podvm-candidate-${OUTPUT_PREFIX}-${DATE} --file cos://${COS_REGION}/${COS_BUCKET}/$(basename ${OUTPUT_QCOW2}) --os-name red-10-amd64"
