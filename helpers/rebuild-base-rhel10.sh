@@ -35,8 +35,10 @@ IMAGE_DIR="/tmp"
 # Allow overriding the kickstart file for baseline runs (B-0 uses upstream verbatim).
 KS_FILE="${KS_OVERRIDE:-${SCRIPT_DIR}/rhel10-dm-root.ks}"
 DATE=$(date -u +%Y%m%d)
-OUTPUT_IMAGE="${IMAGE_DIR}/rhel10-ks-base-${DATE}.qcow2"
-VM_NAME="rhel10-ks-build-${DATE}"
+# OUTPUT_PREFIX lets B-0 and other named runs coexist with the default build
+BASE_PREFIX="${OUTPUT_PREFIX:-rhel10-ks-base}"
+OUTPUT_IMAGE="${IMAGE_DIR}/${BASE_PREFIX}-${DATE}.qcow2"
+VM_NAME="rhel10-ks-build-${BASE_PREFIX}-${DATE}"
 
 # Default ISO location — override with --iso flag
 ISO_PATH="${HOME}/rhel-10.2-x86_64-dvd.iso"
