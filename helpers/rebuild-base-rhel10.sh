@@ -184,7 +184,7 @@ echo "--- Step 3: Partition GUID check ---"
 # sfdisk -d on a raw image outputs full device paths, e.g.:
 #   /tmp/foo.raw1 : ... type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B ...
 # Match on 'raw1'/'raw2' (suffix of the temp filename) not 'part1'/'part2'.
-RAW_TMP=$(mktemp /tmp/rhel10-chk-XXXXXX.raw)
+RAW_TMP=$(sudo mktemp /tmp/rhel10-chk-XXXXXX.raw)
 sudo qemu-img convert -f qcow2 -O raw "${OUTPUT_IMAGE}" "${RAW_TMP}"
 SFDISK_OUT=$(sudo sfdisk -d "${RAW_TMP}" 2>/dev/null)
 sudo rm -f "${RAW_TMP}"
