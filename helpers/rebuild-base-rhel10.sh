@@ -32,7 +32,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Output goes to /tmp so qemu:///system (uid libvirt-qemu) can access it.
 IMAGE_DIR="/tmp"
-KS_FILE="${SCRIPT_DIR}/rhel10-dm-root.ks"
+# Allow overriding the kickstart file for baseline runs (B-0 uses upstream verbatim).
+KS_FILE="${KS_OVERRIDE:-${SCRIPT_DIR}/rhel10-dm-root.ks}"
 DATE=$(date -u +%Y%m%d)
 OUTPUT_IMAGE="${IMAGE_DIR}/rhel10-ks-base-${DATE}.qcow2"
 VM_NAME="rhel10-ks-build-${DATE}"
@@ -180,13 +181,17 @@ echo "✓ Virtual size OK (${VIRT_GIB} GiB)"
 echo ""
 echo "--- Step 3: Partition GUID check ---"
 
-RAW_TMP=$(mktemp /tmp/rhel10-check-XXXXXX.raw)
-qemu-img convert -f qcow2 -O raw "${OUTPUT_IMAGE}" "${RAW_TMP}"
-SFDISK_OUT=$(sfdisk -d "${RAW_TMP}" 2>/dev/null)
-rm -f "${RAW_TMP}"
+# sfdisk -d on a raw image outputs full device paths, e.g.:
+#   /tmp/foo.raw1 : ... type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B ...
+# Match on 'raw1'/'raw2' (suffix of the temp filename) not 'part1'/'part2'.
+RAW_TMP=$(mktemp /tmp/rhel10-chk-XXXXXX.raw)
+sudo qemu-img convert -f qcow2 -O raw "${OUTPUT_IMAGE}" "${RAW_TMP}"
+SFDISK_OUT=$(sudo sfdisk -d "${RAW_TMP}" 2>/dev/null)
+sudo rm -f "${RAW_TMP}"
+echo "${SFDISK_OUT}"
 
-EFI_GUID=$(echo "${SFDISK_OUT}"  | grep 'part1' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
-ROOT_GUID=$(echo "${SFDISK_OUT}" | grep 'part2' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
+EFI_GUID=$(echo "${SFDISK_OUT}"  | grep 'raw1 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
+ROOT_GUID=$(echo "${SFDISK_OUT}" | grep 'raw2 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
 
 echo "  EFI  partition GUID: ${EFI_GUID}"
 echo "  Root partition GUID: ${ROOT_GUID}"
@@ -201,9 +206,9 @@ if ! echo "${ROOT_GUID}" | grep -qi "4F68BCE3"; then
     GUID_OK=false
 fi
 if [[ "${GUID_OK}" = false ]]; then
-    echo "Kickstart %pre sfdisk should have set GUIDs correctly." >&2
-    echo "Do NOT use this image — fix the kickstart and rebuild." >&2
-    rm -f "${OUTPUT_IMAGE}"
+    echo "GUID check failed. Image left at ${OUTPUT_IMAGE} for inspection." >&2
+    echo "Run: sudo sfdisk -d <(sudo qemu-img convert -f qcow2 -O raw ${OUTPUT_IMAGE} /dev/stdout)" >&2
+    echo "Then fix the kickstart and rebuild." >&2
     exit 1
 fi
 echo "✓ Partition GUIDs correct"
