@@ -74,9 +74,13 @@ fi
 
 mkdir -p "${IMAGE_DIR}"
 
+# Use the user session libvirt URI so the QCOW2 can live in $HOME.
+# qemu:///system runs as uid 64055 (libvirt-qemu) which cannot access /home/gcoon.
+export LIBVIRT_DEFAULT_URI="qemu:///session"
+
 # Clean up any leftover VM with the same name from a previous failed run
-virsh --connect qemu:///session destroy "${VM_NAME}" 2>/dev/null || true
-virsh --connect qemu:///session undefine "${VM_NAME}" 2>/dev/null || true
+virsh destroy "${VM_NAME}" 2>/dev/null || true
+virsh undefine "${VM_NAME}" 2>/dev/null || true
 
 # --- Step 1: Run virt-install -----------------------------------------------
 echo ""
@@ -85,6 +89,7 @@ echo "This takes 15-25 minutes. The VM will power off when done."
 echo ""
 
 virt-install \
+    --connect qemu:///session \
     --virt-type kvm \
     --os-variant rhel10.0 \
     --arch x86_64 \
@@ -103,11 +108,11 @@ echo ""
 echo "--- Step 1: Waiting for install to finish ---"
 START_WAIT=$(date +%s)
 MAX_WAIT=1800  # 30 min hard limit
-while virsh --connect qemu:///session list 2>/dev/null | grep -q "${VM_NAME}"; do
+while virsh list 2>/dev/null | grep -q "${VM_NAME}"; do
     ELAPSED=$(( $(date +%s) - START_WAIT ))
     if [[ ${ELAPSED} -ge ${MAX_WAIT} ]]; then
         echo "ERROR: Install timed out after ${MAX_WAIT}s" >&2
-        virsh --connect qemu:///session destroy "${VM_NAME}" 2>/dev/null || true
+        virsh destroy "${VM_NAME}" 2>/dev/null || true
         rm -f "${OUTPUT_IMAGE}"
         exit 1
     fi
