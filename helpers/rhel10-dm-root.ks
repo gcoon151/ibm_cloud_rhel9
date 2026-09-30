@@ -33,9 +33,15 @@ keyboard --vckeymap=us --xlayouts='us'
 # System language
 lang en_US.UTF-8
 
-# Network information
-network --bootproto=dhcp --hostname=localhost.localdomain
+# Network — disabled. No DHCP server is available on the KVM build host bridge.
+# Anaconda would hang for 60-90s on DHCP timeout if left as dhcp.
+# peer pod VMs get their network config from cloud-init/afterburn at runtime.
+network --bootproto=none --hostname=localhost.localdomain --no-activate
 firewall --disabled
+
+# AppStream repo from CDROM — required so Anaconda can resolve packages
+# like kernel-uki-virt that are in AppStream, not just BaseOS.
+repo --name="AppStream" --baseurl=file:///run/install/sources/mount-0000-cdrom/AppStream
 
 # Use CDROM
 cdrom
@@ -58,20 +64,14 @@ skipx
 # Power down after install so the QCOW2 is not left in a running state
 poweroff
 
-# ---------------------------------------------------------------------------
-# Partition layout
-# Pre-wipe and set partition type GUIDs explicitly so they survive qemu-img
-# operations and are never dropped (Image Builder is known to drop them).
-# ---------------------------------------------------------------------------
-%pre --erroronfail
-sfdisk --wipe always -X gpt /dev/sda << EOF
-2048,1032192,C12A7328-F81F-11D2-BA4B-00A0C93EC93B
-,5242880,4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
-EOF
-%end
-
-part /boot/efi --onpart=sda1 --fstype=efi
-part /         --onpart=sda2 --fstype=ext4
+# Partition layout — Anaconda auto-create, then fix GUIDs in %post.
+# NOTE: %pre sfdisk + --onpart was tried in run B-1 and caused Anaconda to
+# stall (52KB written in 30 min). Reverted to upstream pattern for B-2.
+# See rhel10-experimental/BUILD_BASELINE.md Run B-1 for details.
+ignoredisk --only-use=sda
+clearpart --none --initlabel
+part /boot/efi --fstype="efi" --ondisk=sda --size=512 --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
+part /         --fstype="ext4" --ondisk=sda --grow --maxsize=0
 
 %packages
 @^minimal-environment
@@ -110,7 +110,9 @@ kernel-modules-extra
 %end
 
 %post --erroronfail
-# Confirm partition GUIDs are correct after Anaconda (it sometimes resets them).
+# Fix partition GUIDs — Anaconda may reset them during install.
+# Linux x86-64 root: 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
+# EFI System:        C12A7328-F81F-11D2-BA4B-00A0C93EC93B
 sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 sfdisk --part-type /dev/sda 1 C12A7328-F81F-11D2-BA4B-00A0C93EC93B
 

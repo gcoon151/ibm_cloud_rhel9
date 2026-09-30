@@ -109,28 +109,53 @@ virt-install \
     --nographics \
     --noautoconsole \
     --extra-args "console=ttyS0 inst.ks=file:/rhel10-dm-root.ks" \
-    --transient
+    --transient 2>&1 | tee /tmp/rhel10-virt-install.log
 
 echo ""
 echo "--- Step 1: Waiting for install to finish ---"
+
+# Capture serial console output to a log file for post-mortem diagnosis.
+# The PTY appears a few seconds after domain start.
+CONSOLE_LOG="/tmp/rhel10-anaconda-console-${DATE}.log"
+(
+    sleep 3
+    PTY=$(sudo virsh --connect qemu:///system qemu-monitor-command "${VM_NAME}" \
+        --hmp 'info chardev' 2>/dev/null | grep charserial0 | grep -o '/dev/pts/[0-9]*')
+    if [[ -n "${PTY}" ]]; then
+        echo "Console PTY: ${PTY} — logging to ${CONSOLE_LOG}"
+        sudo timeout 2000 cat "${PTY}" > "${CONSOLE_LOG}" 2>/dev/null &
+    else
+        echo "WARNING: Could not find serial console PTY — no console log will be captured"
+    fi
+) &
+CONSOLE_CAPTURE_PID=$!
+echo "Console capture started (log: ${CONSOLE_LOG})"
+
 START_WAIT=$(date +%s)
 MAX_WAIT=1800  # 30 min hard limit
-while virsh list 2>/dev/null | grep -q "${VM_NAME}"; do
+while virsh --connect qemu:///system list 2>/dev/null | grep -q "${VM_NAME}"; do
     ELAPSED=$(( $(date +%s) - START_WAIT ))
     if [[ ${ELAPSED} -ge ${MAX_WAIT} ]]; then
         echo "ERROR: Install timed out after ${MAX_WAIT}s" >&2
-        virsh destroy "${VM_NAME}" 2>/dev/null || true
-        rm -f "${OUTPUT_IMAGE}"
+        virsh --connect qemu:///system destroy "${VM_NAME}" 2>/dev/null || true
+        sudo rm -f "${OUTPUT_IMAGE}"
         exit 1
     fi
     [[ $(( ELAPSED % 60 )) -eq 0 ]] && echo "  ...${ELAPSED}s elapsed"
     sleep 10
 done
-echo "✓ Install finished ($(( $(date +%s) - START_WAIT ))s)"
+ELAPSED_FINAL=$(( $(date +%s) - START_WAIT ))
+kill ${CONSOLE_CAPTURE_PID} 2>/dev/null || true
+echo "✓ Install finished (${ELAPSED_FINAL}s)"
+echo "  Console log: ${CONSOLE_LOG} ($(wc -l < "${CONSOLE_LOG}" 2>/dev/null || echo 0) lines)"
 
 # --- Step 2: Basic sanity checks on the produced image ----------------------
 echo ""
 echo "--- Step 2: Image sanity checks ---"
+
+# The QCOW2 is owned by root (written by qemu:///system). Fix ownership.
+sudo chown "$(id -u):$(id -g)" "${OUTPUT_IMAGE}"
+chmod 644 "${OUTPUT_IMAGE}"
 
 if [[ ! -f "${OUTPUT_IMAGE}" ]]; then
     echo "ERROR: virt-install completed but output file not found: ${OUTPUT_IMAGE}" >&2
@@ -146,7 +171,7 @@ echo "  Virtual size: ${VIRT_GIB} GiB  (on-disk compressed: ${DISK_SIZE})"
 if [[ ${VIRT_GIB} -lt 5 ]]; then
     echo "ERROR: Image is only ${VIRT_GIB} GiB virtual — install likely failed." >&2
     echo "       Expected >= 7 GiB. Removing corrupt output." >&2
-    rm -f "${OUTPUT_IMAGE}"
+    sudo rm -f "${OUTPUT_IMAGE}"
     exit 1
 fi
 echo "✓ Virtual size OK (${VIRT_GIB} GiB)"
