@@ -21,8 +21,10 @@
 # To update: change KERNEL_VERSION here and rebuild the base QCOW2.
 # The coco overlay layer (script-disk-mods.sh) must not change the kernel.
 
-# Use text install
-text
+# Fully unattended install — no interactive prompts.
+# 'cmdline' mode: Anaconda runs non-interactively and aborts if anything
+# requires user input, rather than sitting at a prompt indefinitely.
+cmdline
 
 # Do not run the Setup Agent on first boot
 firstboot --disable
@@ -93,10 +95,13 @@ e2fsprogs
 
 # UKI boot — kernel-install fires during OS install and places the UKI
 # in /boot/efi/EFI/Linux/ automatically. No post-install UKI copy needed.
+# Exclude standard kernel and dracut-rescue — replaced by kernel-uki-virt.
+# Do NOT exclude kernel-modules: kernel-modules-extra depends on it and
+# Anaconda will reject the package set if it is excluded.
 -dracut-config-rescue
 -kernel-core
--kernel-modules
 -kernel
+kernel-modules
 kernel-uki-virt
 uki-direct
 
