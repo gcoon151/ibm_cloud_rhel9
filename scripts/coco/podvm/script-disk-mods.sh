@@ -1,44 +1,41 @@
 #!/bin/bash
+# =============================================================================
+# script-disk-mods.sh — CoCo overlay: package dependencies only  (Layer 3 of 3)
+#
+# Upstream reference: coco-podvm-scripts/scripts/coco/podvm/script-disk-mods.sh
+# Deviations from upstream and rationale: rhel10-experimental/UPSTREAM_DEVIATIONS.md
+#   Key deviation: no kernel install, no UKI copy, no BOOTX64.CSV write (#6)
+#
+# This script runs inside virt-customize as part of the coco-podvm container
+# overlay (Step 4 of build-rhel10-overlay.sh).
+#
+# SCOPE: Install packages that the CoCo binaries require at runtime.
+#        Do NOT install, update, or remove kernel packages.
+#        Do NOT touch /boot/efi — Layer 1 (kickstart) owns the EFI partition.
+#
+# The kernel version and UKI in the image are whatever the base QCOW2 contains.
+# Kernel updates are a base-image concern (Layer 1/2), not a coco overlay concern.
+# =============================================================================
 set -ex
 
-export KERNEL_VERSION=6.12.0-211.16.1.el10_2
-export NVIDIA_DRIVER_VERSION=595.58.03
-
-dnf install -y kernel-{uki-virt,modules,modules-extra}-${KERNEL_VERSION}
-
-# Install the UKI into the EFI partition.
-# 'dnf install kernel-uki-virt' places the UKI at:
-#   /usr/lib/modules/<ver>.x86_64/vmlinuz-virt.efi
-# It does NOT copy it to /boot/efi/EFI/Linux/ — that only happens automatically during a
-# full OS install (kickstart). Inside virt-customize we must copy it explicitly.
-# Note: kernel-install is not used here because it may fail in the virt-customize
-# environment due to missing hooks; a direct copy is reliable.
-mkdir -p /boot/efi/EFI/Linux
-cp /usr/lib/modules/${KERNEL_VERSION}.x86_64/vmlinuz-virt.efi \
-   /boot/efi/EFI/Linux/$(cat /etc/machine-id)-${KERNEL_VERSION}.x86_64.efi
-
-# Assert the UKI was actually placed — fail loudly if not
-UKI_COUNT=$(ls /boot/efi/EFI/Linux/*.efi 2>/dev/null | wc -l)
-if [[ "${UKI_COUNT}" -eq 0 ]]; then
-    echo "ERROR: UKI copy failed — /boot/efi/EFI/Linux/ is empty after cp" >&2
-    exit 1
-fi
-echo "✓ UKI installed: /boot/efi/EFI/Linux/$(cat /etc/machine-id)-${KERNEL_VERSION}.x86_64.efi"
-
-# Update shim fallback CSV to ensure VM boots latest UKI
-printf "shimx64.efi,redhat,\\\EFI\\\Linux\\\\"`cat /etc/machine-id`"-"`rpm -q --queryformat %{VERSION}-%{RELEASE}\\\n kernel-uki-virt | tail -1`".x86_64.efi ,UKI bootentry\n" | iconv -f ASCII -t UCS-2 > /boot/efi/EFI/redhat/BOOTX64.CSV
-
-echo "removing previous kernel pkgs:" $(rpm -qa "kernel*" | grep -Ev "${KERNEL_VERSION}|^kernel-uki")
-rpm -qa "kernel*" | grep -Ev "${KERNEL_VERSION}|^kernel-uki"  | xargs -r rpm -e --nodeps
-
-# TODO: check if this still needed when we switch to using NVIDIA attestation RPMs.
+# CoCo runtime dependencies
 dnf install -y xmlsec1 xmlsec1-openssl
 
-##### NVIDIA DRIVERS
-if [ -n "${NVIDIA_DRIVER_VERSION}" ]; then
+# ---------------------------------------------------------------------------
+# NVIDIA drivers (optional — gated by NVIDIA_DRIVER_VERSION env var)
+# Set NVIDIA_DRIVER_VERSION='' to skip (default for non-GPU images).
+# ---------------------------------------------------------------------------
+if [ -n "${NVIDIA_DRIVER_VERSION:-}" ]; then
   subscription-manager repos --enable=rhel-10-for-x86_64-supplementary-rpms
   subscription-manager repos --enable=rhel-10-for-x86_64-extensions-rpms
-  dnf install -y --setopt=install_weak_deps=False nvidia-driver-${NVIDIA_DRIVER_VERSION} \
+
+  # Kernel version must match the base QCOW2 exactly.
+  # Read it from the running guest rather than hardcoding.
+  KERNEL_VERSION=$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' kernel-uki-virt)
+  KERNEL_VERSION="${KERNEL_VERSION%.x86_64}"
+
+  dnf install -y --setopt=install_weak_deps=False \
+      nvidia-driver-${NVIDIA_DRIVER_VERSION} \
       nvidia-driver-cuda-${NVIDIA_DRIVER_VERSION} \
       nvidia-driver-libs-${NVIDIA_DRIVER_VERSION} \
       nvidia-persistenced-${NVIDIA_DRIVER_VERSION} \
