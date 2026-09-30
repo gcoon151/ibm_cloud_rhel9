@@ -90,7 +90,7 @@ EFI_DEV=$(guestfish --ro -a "$QCOW2" -- run : list-partitions 2>/dev/null | \
         [[ "${guid}" == "${EFI_GUID}" ]] && echo "$dev" && break
     done || true)
 
-UKI_FILES=$(guestfish --ro -a "$QCOW2" -m /dev/sda1:/boot/efi -- ls /boot/efi/EFI/Linux/ 2>/dev/null || true)
+UKI_FILES=$(guestfish --ro -a "$QCOW2" -m /dev/sda1 -- ls /EFI/Linux/ 2>/dev/null || true)
 if [[ -n "$UKI_FILES" ]]; then
     ok "UKI present in /boot/efi/EFI/Linux/: $UKI_FILES"
 else
@@ -102,7 +102,7 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- [4] Verity addon ---"
-ADDON=$(guestfish --ro -a "$QCOW2" -m /dev/sda1:/boot/efi -- find /boot/efi/EFI/Linux/ 2>/dev/null | grep 'verity.addon.efi' || true)
+ADDON=$(guestfish --ro -a "$QCOW2" -m /dev/sda1 -- find /EFI/Linux/ 2>/dev/null | grep 'verity.addon.efi' || true)
 if [[ -n "$ADDON" ]]; then
     ok "Verity addon present: $ADDON"
 else
