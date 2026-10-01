@@ -88,3 +88,75 @@ EOF
   chmod 644 /etc/systemd/system/nvidia-cdi.service
   ln -s /etc/systemd/system/nvidia-cdi.service /etc/systemd/system/multi-user.target.wants/nvidia-cdi.service
 fi
+
+# ---------------------------------------------------------------------------
+# DEBUG LOGGING — gate on DEBUG_BUILD env var so production builds are clean
+# Set DEBUG_BUILD=1 to enable verbose console output from all CoCo services.
+# ---------------------------------------------------------------------------
+if [ "${DEBUG_BUILD:-0}" = "1" ]; then
+  echo "=== DEBUG_BUILD=1: enabling verbose console logging for CoCo services ==="
+
+  # agent-config.toml: debug log level, no signature verification
+  cat > /etc/agent-config.toml << 'EOF'
+server_addr = "unix:///run/kata-containers/agent.sock"
+guest_components_procs = "none"
+image_registry_auth = "file:///run/peerpod/auth.json"
+log_level = "debug"
+EOF
+
+  # kata-agent: RUST_LOG=debug, console output, restart on failure
+  mkdir -p /etc/systemd/system/kata-agent.service.d
+  cat > /etc/systemd/system/kata-agent.service.d/10-override.conf << 'EOF'
+[Service]
+ExecStartPre=sh -c '[ -b /dev/mapper/scratch ] && mount /dev/mapper/scratch /kata-containers'
+Restart=on-failure
+RestartSec=5s
+Environment=RUST_LOG=debug
+StandardOutput=journal+console
+StandardError=journal+console
+EOF
+
+  # agent-protocol-forwarder: RUST_LOG=debug, console output
+  mkdir -p /etc/systemd/system/agent-protocol-forwarder.service.d
+  cat > /etc/systemd/system/agent-protocol-forwarder.service.d/10-override.conf << 'EOF'
+[Service]
+Environment=RUST_LOG=debug
+StandardOutput=journal+console
+StandardError=journal+console
+EOF
+
+  # attestation-agent: RUST_LOG=debug, console output
+  mkdir -p /etc/systemd/system/attestation-agent.service.d
+  cat > /etc/systemd/system/attestation-agent.service.d/10-override.conf << 'EOF'
+[Service]
+Environment=RUST_LOG=debug
+StandardOutput=journal+console
+StandardError=journal+console
+EOF
+
+  # confidential-data-hub: RUST_LOG=debug, console output
+  mkdir -p /etc/systemd/system/confidential-data-hub.service.d
+  cat > /etc/systemd/system/confidential-data-hub.service.d/10-override.conf << 'EOF'
+[Service]
+Environment=RUST_LOG=debug
+StandardOutput=journal+console
+StandardError=journal+console
+EOF
+
+  # systemctl wrapper: intercept poweroff/halt and log caller to console
+  mv /usr/bin/systemctl /usr/bin/systemctl.real
+  cat > /usr/bin/systemctl << 'WRAPPER'
+#!/bin/bash
+if [[ "${1:-}" == 'poweroff' || "${1:-}" == 'halt' || "${2:-}" == 'poweroff' ]]; then
+    echo '=== POWEROFF INTERCEPTED ===' > /dev/console
+    echo "Args: $@  PID=$$" > /dev/console
+    pstree -aps $$ > /dev/console 2>&1 || ps -ef > /dev/console 2>&1
+    journalctl -b -n 60 --no-pager > /dev/console 2>/dev/null
+    echo '=== END POWEROFF INTERCEPT ===' > /dev/console
+fi
+exec /usr/bin/systemctl.real "$@"
+WRAPPER
+  chmod 755 /usr/bin/systemctl
+
+  echo "=== DEBUG_BUILD setup complete ==="
+fi
