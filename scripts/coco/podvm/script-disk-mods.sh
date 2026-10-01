@@ -143,20 +143,12 @@ StandardOutput=journal+console
 StandardError=journal+console
 EOF
 
-  # systemctl wrapper: intercept poweroff/halt and log caller to console
-  mv /usr/bin/systemctl /usr/bin/systemctl.real
-  cat > /usr/bin/systemctl << 'WRAPPER'
-#!/bin/bash
-if [[ "${1:-}" == 'poweroff' || "${1:-}" == 'halt' || "${2:-}" == 'poweroff' ]]; then
-    echo '=== POWEROFF INTERCEPTED ===' > /dev/console
-    echo "Args: $@  PID=$$" > /dev/console
-    pstree -aps $$ > /dev/console 2>&1 || ps -ef > /dev/console 2>&1
-    journalctl -b -n 60 --no-pager > /dev/console 2>/dev/null
-    echo '=== END POWEROFF INTERCEPT ===' > /dev/console
-fi
-exec /usr/bin/systemctl.real "$@"
-WRAPPER
-  chmod 755 /usr/bin/systemctl
+  # Log kata-agent exit reason to console via ExecStopPost
+  # (safer than a systemctl wrapper which intercepts all systemd internal calls)
+  mkdir -p /etc/systemd/system/kata-agent.service.d
+  cat >> /etc/systemd/system/kata-agent.service.d/10-override.conf << 'EOF'
+ExecStopPost=/bin/bash -c 'echo "=== kata-agent stopped: SERVICE_RESULT=%s EXIT_CODE=%s EXIT_STATUS=%s ===" > /dev/console; journalctl -b -u kata-agent -n 30 --no-pager > /dev/console 2>&1'
+EOF
 
   echo "=== DEBUG_BUILD setup complete ==="
 fi
