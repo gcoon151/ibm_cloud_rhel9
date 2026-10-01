@@ -2,10 +2,19 @@
 Description=Uptycs OSQuery Agent (Conditional on initdata)
 After=process-user-data.service
 Before=kata-agent.service
-ConditionPathExists=/run/peerpod/initdata
 
 [Service]
 Type=simple
+# Wait up to 30s for /run/peerpod/initdata to appear.
+# process-user-data.service writes it, but systemd evaluates ConditionPathExists
+# before the file is guaranteed to exist — this polling loop is the reliable fix.
+ExecStartPre=/bin/bash -c '\
+  for i in $(seq 1 30); do \
+    [ -f /run/peerpod/initdata ] && exit 0; \
+    sleep 1; \
+  done; \
+  echo "initdata not found after 30s — skipping Uptycs provisioning"; \
+  exit 0'
 ExecStart=/usr/local/bin/provision-uptycs.sh
 Restart=on-failure
 RestartSec=10s
