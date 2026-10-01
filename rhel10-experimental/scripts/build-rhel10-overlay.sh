@@ -100,6 +100,10 @@ if [[ ! -d "${COCO_SCRIPTS_DIR}" ]]; then
 fi
 cp "${REPO_ROOT}/scripts/coco/podvm/podvm_maker.sh"      "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
 cp "${REPO_ROOT}/scripts/coco/podvm/script-disk-mods.sh" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+# virt-customize --run gives scripts a clean env — bake DEBUG_BUILD value directly into the script
+if [[ -n "${DEBUG_BUILD:-}" ]]; then
+    sed -i "s/DEBUG_BUILD:-0}/DEBUG_BUILD:-${DEBUG_BUILD}}/" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/script-disk-mods.sh"
+fi
 cp "${REPO_ROOT}/scripts/coco/podvm/install-uptycs.sh"   "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
 cp "${REPO_ROOT}/scripts/coco/podvm/provision-uptycs.sh" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
 # example_run.sh — adds -v /boot:/boot:ro and -v /dev:/dev (fixes supermin kernel lookup on Ubuntu)
