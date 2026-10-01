@@ -134,6 +134,7 @@ export QCOW2="${OUTPUT_QCOW2}"
 export PODVM_BINARY="registry.redhat.io/openshift-sandboxed-containers/osc-podvm-payload-rhel9:${PAYLOAD_TAG}"
 export SSHD_SERVICE="${SSHD_SERVICE}"
 export NVIDIA_DRIVER_VERSION=""
+export DEBUG_BUILD="${DEBUG_BUILD:-}"
 
 cd "${COCO_SCRIPTS_DIR}"
 bash example_run.sh "${OUTPUT_QCOW2}"
