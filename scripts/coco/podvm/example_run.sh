@@ -29,6 +29,11 @@ fi
 
 [[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && sudo -E podman secret create activation_key --env ACTIVATION_KEY && sudo -E podman secret create org_id --env ORG_ID && \
     SM_SECRET_RUN_CMD="--secret activation_key,type=env,target=ACTIVATION_KEY --secret org_id,type=env,target=ORG_ID "
+# If DEBUG_BUILD is set, bind-mount our modified script-disk-mods.sh over the container's copy.
+# This bypasses the container image cache problem (container rebuild fails without RH credentials).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -n "$DEBUG_BUILD" ]] && run_extras+=" -v ${SCRIPT_DIR}/scripts/coco/podvm/script-disk-mods.sh:/scripts/coco/podvm/script-disk-mods.sh:ro "
+
 sudo -E podman run --rm \
     --privileged \
     -v $QCOW2:/disk.qcow2 \
