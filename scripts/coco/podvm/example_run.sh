@@ -10,8 +10,8 @@ set -euo pipefail
 # on Ubuntu build hosts after security updates tightened vmlinuz permissions.
 
 QCOW2=${1:-${QCOW2:-~/.local/share/libvirt/images/rhel10.1-created-ks.qcow2}}
-IMAGE_CERTIFICATE_PEM=$2
-IMAGE_PRIVATE_KEY=$3
+IMAGE_CERTIFICATE_PEM=${2:-}
+IMAGE_PRIVATE_KEY=${3:-}
 
 [[ -f $QCOW2 ]] || \
     { printf "One or more required files are missing:\n\tQCOW2=$QCOW2\n "; exit 1; }
