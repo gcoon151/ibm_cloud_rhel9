@@ -193,6 +193,8 @@ echo "--- Step 4: Running CoCo + Uptycs overlay ---"
 # Login to registry as root (sudo podman run pulls from root's auth config).
 sudo --preserve-env=HOME podman login registry.redhat.io --username "${RH_USERNAME}" --password "${RH_PASSWORD}"
 
+# Remove any stale output from a previous failed run in the same UTC hour
+[[ -f "${OUTPUT_QCOW2}" ]] && chmod 644 "${OUTPUT_QCOW2}" && rm -f "${OUTPUT_QCOW2}"
 cp "${BASE_QCOW2}" "${OUTPUT_QCOW2}"
 
 export QCOW2="${OUTPUT_QCOW2}"
