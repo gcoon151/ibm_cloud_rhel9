@@ -136,7 +136,13 @@ cp "${REPO_ROOT}/scripts/coco/podvm/provision-uptycs.sh" "${COCO_SCRIPTS_DIR}/sc
 cp "${REPO_ROOT}/scripts/coco/podvm/example_run.sh"      "${COCO_SCRIPTS_DIR}/"
 mkdir -p "${COCO_SCRIPTS_DIR}/services"
 cp "${REPO_ROOT}/services/uptycs-osquery.service" "${COCO_SCRIPTS_DIR}/services/"
-echo "✓ IBM overlay scripts copied"
+# IBM patches to upstream coco-podvm-scripts files — tracked in repo, applied on top of
+# the upstream clone every build. See rhel10-experimental/UPSTREAM_DEVIATIONS.md entries
+# 9, 10, 11 for rationale. Never edit the upstream clone directly on the build host.
+PATCHES_DIR="${REPO_ROOT}/rhel10-experimental/scripts/patches"
+cp "${PATCHES_DIR}/verity.sh"          "${COCO_SCRIPTS_DIR}/scripts/verity/verity.sh"
+cp "${PATCHES_DIR}/coco-components.sh" "${COCO_SCRIPTS_DIR}/scripts/coco/coco-components.sh"
+echo "✓ IBM overlay scripts copied (including upstream patches)"
 
 # ---------------------------------------------------------------------------
 # STEP 3: Build coco-podvm container into ROOT's podman store
