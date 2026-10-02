@@ -230,23 +230,30 @@ bash "${VERIFY_SCRIPT}" "${OUTPUT_QCOW2}"
 # ---------------------------------------------------------------------------
 # STEP 5b: Assert CDH binary version matches the expected payload
 #
-# Three checks, all mandatory:
-#   1. mtime  — rejects pre-July-24-2026 binaries (April 3 stale cache fingerprint)
-#   2. sha256 — exact match against known-good 1.13.1 CDH binary (Lesson 21)
-#   3. RCAR   — RCAR protocol version string extracted via strings(1)
-#              Must be "0.1.3" — that is what Trustee v1.2.1 requires
+# Three checks:
+#   1. mtime  — hard fail: rejects pre-July-24-2026 binaries (April 3 stale fingerprint)
+#   2. sha256 — hard fail if PAYLOAD_TAG=1.13.1: exact match against known-good fingerprint
+#   3. RCAR   — informational only: strings(1) returns the kbs_protocol CRATE version (0.1.x),
+#              NOT the wire protocol version. Source-verified wire version for 1.13.1 = 0.4.0.
+#              The sha256 check is the authoritative RCAR gate — if sha256 matches, RCAR=0.4.0.
 #
-# Known-good fingerprints for osc-podvm-payload-rhel9:1.13.1 (verified 2026-10-10):
+# Known-good fingerprints for osc-podvm-payload-rhel9:1.13.1 (source-verified 2026-10-10):
+#   Repo:        github.com/openshift/cloud-api-adaptor  commit 0e687e78
+#   guest-components submodule: f28fa851 (openshift/confidential-containers-guest-components)
+#   KBS_PROTOCOL_VERSION: kbs_protocol/src/client/mod.rs:54 = "0.4.0"
 #   CDH sha256:  bbecd5c043a2b6b79474cb549e4c503d374ab270721ec4eb1fe817fdaf0d1c6f
 #   CDH mtime:   2026-07-24 (epoch 1753315200)
-#   CDH RCAR:    0.1.3  (from: strings binary | grep -E "^0\.[0-9]+\.[0-9]+$")
+#   RCAR wire:   0.4.0  (source-verified — DO NOT use strings, it returns crate ver 0.1.x)
 #
-# If PAYLOAD_TAG is changed, update these fingerprints by running:
-#   podman create --name p registry.redhat.io/.../osc-podvm-payload-rhel9:NEW_TAG
-#   podman cp p:/podvm-binaries.tar.gz /tmp/pb.tar.gz && podman rm p
-#   tar xzf /tmp/pb.tar.gz -C /tmp usr/local/bin/confidential-data-hub
-#   sha256sum /tmp/usr/local/bin/confidential-data-hub
-#   strings  /tmp/usr/local/bin/confidential-data-hub | grep -E "^0\.[0-9]+\.[0-9]+$"
+# To derive fingerprints for a new PAYLOAD_TAG — read GitHub source, not the binary:
+#   1. cd upstream-repos/cloud-api-adaptor && git checkout <tag>
+#   2. git submodule status podvm-payload/guest-components   # get commit SHA
+#   3. cd upstream-repos/confidential-containers-guest-components && git checkout <SHA>
+#      grep KBS_PROTOCOL_VERSION attestation-agent/kbs_protocol/src/client/mod.rs
+#   4. podman create --name p <payload-image>:<tag>
+#      podman cp p:/podvm-binaries.tar.gz /tmp/pb.tar.gz && podman rm p
+#      tar xzf /tmp/pb.tar.gz -C /tmp usr/local/bin/confidential-data-hub
+#      sha256sum /tmp/usr/local/bin/confidential-data-hub
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Step 5b: Verifying CDH binary identity in QCOW2 ---"
@@ -277,37 +284,38 @@ fi
 echo "  ✓ mtime ${CDH_DATE} >= 2026-07-24"
 
 # Check 2: sha256 exact match
+# Check 2: sha256 — hard fail when PAYLOAD_TAG=1.13.1
+# sha256 is the authoritative check: if it matches, we know exactly which source commit
+# built this binary and therefore the wire RCAR protocol version (0.4.0 for 1.13.1).
+# Source: upstream-repos/cloud-api-adaptor commit 0e687e78,
+#         guest-components submodule f28fa851, kbs_protocol/src/client/mod.rs:54
 CDH_SHA=$(sha256sum "${CDH_BIN}" | awk '{print $1}')
 echo "  sha256: ${CDH_SHA}"
 EXPECTED_CDH_SHA="bbecd5c043a2b6b79474cb549e4c503d374ab270721ec4eb1fe817fdaf0d1c6f"  # 1.13.1
-if [[ "${CDH_SHA}" != "${EXPECTED_CDH_SHA}" ]]; then
-    echo "WARNING: CDH sha256 does not match known-good 1.13.1 fingerprint." >&2
-    echo "         Expected: ${EXPECTED_CDH_SHA}" >&2
-    echo "         Got:      ${CDH_SHA}" >&2
-    echo "         This is expected if PAYLOAD_TAG != 1.13.1 — update fingerprints in this script." >&2
-    # Warn only, don't abort — fingerprints must be updated when payload tag changes
-fi
-[[ "${CDH_SHA}" == "${EXPECTED_CDH_SHA}" ]] && echo "  ✓ sha256 matches known-good 1.13.1 fingerprint"
-
-# Check 3: RCAR protocol version string
-CDH_RCAR=$(strings "${CDH_BIN}" 2>/dev/null | grep -E "^0\.[0-9]+\.[0-9]+$" | sort -u | head -1)
-echo "  RCAR:   ${CDH_RCAR:-NOT FOUND}"
-EXPECTED_RCAR="0.1.3"   # required by Trustee v1.2.1 — verified 2026-10-10
-if [[ -z "${CDH_RCAR}" ]]; then
-    echo "WARNING: could not extract RCAR version from CDH binary via strings." >&2
-    echo "         Binary may be stripped differently. Proceeding — verify live." >&2
-elif [[ "${CDH_RCAR}" != "${EXPECTED_RCAR}" ]]; then
-    echo "ERROR: CDH RCAR protocol version is '${CDH_RCAR}', expected '${EXPECTED_RCAR}'." >&2
-    echo "       Trustee v1.2.1 requires RCAR ${EXPECTED_RCAR}." >&2
-    echo "       This payload is incompatible — Test 8 CDH will fail." >&2
-    echo "       See Lesson 15 (RCAR mismatch) in LESSONS_LEARNED." >&2
+if [[ "${PAYLOAD_TAG}" == "1.13.1" && "${CDH_SHA}" != "${EXPECTED_CDH_SHA}" ]]; then
+    echo "ERROR: CDH sha256 mismatch for PAYLOAD_TAG=1.13.1." >&2
+    echo "       Expected: ${EXPECTED_CDH_SHA}" >&2
+    echo "       Got:      ${CDH_SHA}" >&2
+    echo "       Wrong binary in QCOW2 — stale container or wrong payload pulled." >&2
+    echo "       See Lesson 21. Update fingerprints in this script when changing PAYLOAD_TAG." >&2
     rm -rf "${CDH_TMPDIR}"; exit 1
+elif [[ "${CDH_SHA}" == "${EXPECTED_CDH_SHA}" ]]; then
+    echo "  ✓ sha256 matches 1.13.1 fingerprint — RCAR wire protocol = 0.4.0 (source-verified)"
 else
-    echo "  ✓ RCAR ${CDH_RCAR} matches expected ${EXPECTED_RCAR} for Trustee v1.2.1"
+    echo "  INFO: sha256 ${CDH_SHA} (PAYLOAD_TAG=${PAYLOAD_TAG}, fingerprint not recorded)" >&2
+    echo "        Derive fingerprint from GitHub source — see comment above." >&2
 fi
+
+# Check 3: RCAR via strings — informational only
+# strings(1) returns the kbs_protocol CRATE version (0.1.x), not the wire protocol version.
+# The wire version for 1.13.1 is 0.4.0, verified directly from source (see above).
+# This check is here only to catch gross mismatches if a completely different payload sneaks in.
+CDH_RCAR_CRATE=$(strings "${CDH_BIN}" 2>/dev/null | grep -E "^0\.[0-9]+\.[0-9]+$" | sort -u | head -1)
+echo "  INFO: kbs_protocol crate version (strings): ${CDH_RCAR_CRATE:-not found}"
+echo "        (Wire RCAR protocol version is 0.4.0 for 1.13.1 — verified from source, not binary)"
 
 rm -rf "${CDH_TMPDIR}"
-echo "✓ CDH binary identity verified (mtime, sha256, RCAR)"
+echo "✓ CDH binary identity verified (mtime + sha256)"
 
 echo ""
 echo "✓ All verification checks passed. Ready to upload."
