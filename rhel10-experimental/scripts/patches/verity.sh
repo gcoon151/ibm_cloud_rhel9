@@ -269,7 +269,17 @@ function apply_dmverity()
     partprobe $NBD_DEVICE
     # Allow udev events to settle again after partprobe
     udevadm settle
-    sleep 1 # Optional small sleep just in case
+    sleep 2
+
+    # IBM MOD: systemd-repart writes the verity partition but leaves the GPT backup
+    # header corrupt (it does not call sgdisk -e). Must re-relocate backup header
+    # after repart, while nbd is still connected.
+    # Deviation #9 in UPSTREAM_DEVIATIONS.md.
+    echo "Re-relocating GPT backup header after systemd-repart..."
+    sgdisk -e "$NBD_DEVICE"
+    udevadm settle
+    sleep 1
+    echo "✓ GPT backup header re-relocated after repart"
 
     if [ "$RH" == "TBD" ]; then
         echo "roothash is TBD, something went wrong. Make sure the image you are using doesn't have a /verity partition already!"
@@ -280,11 +290,14 @@ function apply_dmverity()
     echo "Root hash: $RH"
 
     # IBM MOD: Assert verity partition was actually created.
+    # Use sgdisk -p (raw partition listing) rather than lsblk PARTTYPE — lsblk
+    # PARTTYPE field is unreliable for newly-created nbd partitions until the kernel
+    # re-reads the table. sgdisk reads directly from the device.
     # Deviation #11 in UPSTREAM_DEVIATIONS.md.
     PART_COUNT=$(lsblk -r $NBD_DEVICE | grep -c "^nbd" || true)
     echo "Partition count after verity: $PART_COUNT"
-    if ! lsblk -o NAME,PARTTYPE -r $NBD_DEVICE | grep -qi "d13c5d3b"; then
-        echo "ERROR: verity hash partition (type d13c5d3b...) not found after systemd-repart" >&2
+    if ! sgdisk -p "$NBD_DEVICE" 2>/dev/null | grep -qi "root-x86-64-verity\|830C"; then
+        echo "ERROR: verity hash partition (root-x86-64-verity / type 830C) not found after systemd-repart" >&2
         echo "       systemd-repart may have silently failed." >&2
         exit 1
     fi
