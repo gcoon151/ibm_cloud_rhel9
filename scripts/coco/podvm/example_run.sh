@@ -15,7 +15,10 @@ IMAGE_PRIVATE_KEY=$3
 
 [[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && echo "Subscription credentials have been found" && SM_SECRET_BUILD_CMD=" --secret=id=activation_key,env=ACTIVATION_KEY --secret=id=org_id,env=ORG_ID "
 
-sudo -E podman build -t coco-podvm \
+# NOTE: build-rhel10-overlay.sh already built coco-podvm into root's store in Step 3.
+# This second build (inside example_run.sh) is a belt-and-suspenders fallback.
+# sudo-rs resets env; --preserve-env passes the secrets through.
+sudo --preserve-env=ACTIVATION_KEY,ORG_ID podman build -t coco-podvm \
     ${SM_SECRET_BUILD_CMD} \
     -f Dockerfile . || printf "\n\n!!! Faild to build coco-podvm, will used cached image if it exists !!!\n"
 
@@ -25,16 +28,21 @@ fi
 
 [[ -n "$ROOT_PASSWORD" ]] && run_extras+=" -e ROOT_PASSWORD=$ROOT_PASSWORD "
 [[ -n "$PODVM_BINARY" ]] && run_extras+=" -e PODVM_BINARY=$PODVM_BINARY "
+[[ -n "$PODVM_BINARY_DIGEST" ]] && run_extras+=" -e PODVM_BINARY_DIGEST=$PODVM_BINARY_DIGEST "
 [[ -n "$DEBUG_BUILD" ]] && run_extras+=" -e DEBUG_BUILD=${DEBUG_BUILD} "
 
-[[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && sudo -E podman secret create activation_key --env ACTIVATION_KEY && sudo -E podman secret create org_id --env ORG_ID && \
+# sudo-rs (this Ubuntu build host) resets env by default; use --preserve-env so podman
+# secret create can read ACTIVATION_KEY / ORG_ID from the environment.
+[[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && \
+    sudo --preserve-env=ACTIVATION_KEY podman secret create activation_key --env ACTIVATION_KEY && \
+    sudo --preserve-env=ORG_ID         podman secret create org_id         --env ORG_ID && \
     SM_SECRET_RUN_CMD="--secret activation_key,type=env,target=ACTIVATION_KEY --secret org_id,type=env,target=ORG_ID "
 # If DEBUG_BUILD is set, bind-mount our modified script-disk-mods.sh over the container's copy.
 # This bypasses the container image cache problem (container rebuild fails without RH credentials).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -n "$DEBUG_BUILD" ]] && run_extras+=" -v ${SCRIPT_DIR}/scripts/coco/podvm/script-disk-mods.sh:/scripts/coco/podvm/script-disk-mods.sh:ro "
 
-sudo -E podman run --rm \
+sudo podman run --rm \
     --privileged \
     -v $QCOW2:/disk.qcow2 \
     $CERT_OPTIONS \
