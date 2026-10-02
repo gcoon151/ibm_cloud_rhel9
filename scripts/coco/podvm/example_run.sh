@@ -33,14 +33,16 @@ if ! sudo --preserve-env=ACTIVATION_KEY,ORG_ID podman build -t coco-podvm \
     echo "WARNING: podman build failed but cached localhost/coco-podvm exists — using cache"
 fi
 
-if [[ -n "${IMAGE_CERTIFICATE_PEM}" && -n "${IMAGE_PRIVATE_KEY}" ]]; then
+if [[ -n "${IMAGE_CERTIFICATE_PEM:-}" && -n "${IMAGE_PRIVATE_KEY:-}" ]]; then
     CERT_OPTIONS="-v $IMAGE_CERTIFICATE_PEM:/public.pem:ro,Z -v $IMAGE_PRIVATE_KEY:/private.key:ro,Z"
 fi
 
-[[ -n "$ROOT_PASSWORD" ]] && run_extras+=" -e ROOT_PASSWORD=$ROOT_PASSWORD "
-[[ -n "$PODVM_BINARY" ]] && run_extras+=" -e PODVM_BINARY=$PODVM_BINARY "
-[[ -n "$PODVM_BINARY_DIGEST" ]] && run_extras+=" -e PODVM_BINARY_DIGEST=$PODVM_BINARY_DIGEST "
-[[ -n "$DEBUG_BUILD" ]] && run_extras+=" -e DEBUG_BUILD=${DEBUG_BUILD} "
+[[ -n "${ROOT_PASSWORD:-}" ]] && run_extras+=" -e ROOT_PASSWORD=${ROOT_PASSWORD} "
+[[ -n "${PODVM_BINARY:-}" ]] && run_extras+=" -e PODVM_BINARY=${PODVM_BINARY} "
+[[ -n "${PODVM_BINARY_DIGEST:-}" ]] && run_extras+=" -e PODVM_BINARY_DIGEST=${PODVM_BINARY_DIGEST} "
+[[ -n "${DEBUG_BUILD:-}" ]] && run_extras+=" -e DEBUG_BUILD=${DEBUG_BUILD} "
+[[ -n "${SSHD_SERVICE:-}" ]] && run_extras+=" -e SSHD_SERVICE=${SSHD_SERVICE} "
+[[ -n "${NVIDIA_DRIVER_VERSION:-}" ]] && run_extras+=" -e NVIDIA_DRIVER_VERSION=${NVIDIA_DRIVER_VERSION} "
 
 # Bind-mount root's registry auth into the container so podman inside can pull from
 # registry.redhat.io. sudo podman login (in build-rhel10-overlay.sh Step 4) writes
@@ -55,16 +57,21 @@ else
     echo "         Run: sudo podman login registry.redhat.io first" >&2
 fi
 
+# Initialize variables that may not be set
+SM_SECRET_RUN_CMD=""
+CERT_OPTIONS=""
+run_extras="${run_extras:-}"
+
 # sudo-rs (this Ubuntu build host) resets env by default; use --preserve-env so podman
 # secret create can read ACTIVATION_KEY / ORG_ID from the environment.
-[[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && \
+[[ -n "${ACTIVATION_KEY:-}" && -n "${ORG_ID:-}" ]] && \
     sudo --preserve-env=ACTIVATION_KEY podman secret create activation_key --env ACTIVATION_KEY && \
     sudo --preserve-env=ORG_ID         podman secret create org_id         --env ORG_ID && \
     SM_SECRET_RUN_CMD="--secret activation_key,type=env,target=ACTIVATION_KEY --secret org_id,type=env,target=ORG_ID "
 # If DEBUG_BUILD is set, bind-mount our modified script-disk-mods.sh over the container's copy.
 # This bypasses the container image cache problem (container rebuild fails without RH credentials).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -n "$DEBUG_BUILD" ]] && run_extras+=" -v ${SCRIPT_DIR}/scripts/coco/podvm/script-disk-mods.sh:/scripts/coco/podvm/script-disk-mods.sh:ro "
+[[ -n "${DEBUG_BUILD:-}" ]] && run_extras+=" -v ${SCRIPT_DIR}/scripts/coco/podvm/script-disk-mods.sh:/scripts/coco/podvm/script-disk-mods.sh:ro "
 
 # Clean up secrets on exit regardless of success or failure
 _cleanup_secrets() {
