@@ -21,6 +21,18 @@ set -ex
 # CoCo runtime dependencies
 dnf install -y xmlsec1 xmlsec1-openssl
 
+# SSH server — installed by default so debug SSH access works.
+# Skipped for hardened images (SSHD_SERVICE=false) since masking a non-existent
+# service is harmless but installing openssh-server in a hardened image wastes
+# space and attack surface.
+if [ "${SSHD_SERVICE:-true}" != "false" ]; then
+    dnf install -y openssh-server
+    systemctl enable sshd.service
+    echo "✓ openssh-server installed and enabled"
+else
+    echo "SSHD_SERVICE=false — skipping openssh-server install"
+fi
+
 # ---------------------------------------------------------------------------
 # NVIDIA drivers (optional — gated by NVIDIA_DRIVER_VERSION env var)
 # Set NVIDIA_DRIVER_VERSION='' to skip (default for non-GPU images).
