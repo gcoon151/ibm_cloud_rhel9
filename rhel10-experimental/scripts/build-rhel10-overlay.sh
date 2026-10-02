@@ -44,6 +44,9 @@ SSHD_SERVICE="${SSHD_SERVICE:-true}"
 OUTPUT_PREFIX="${OUTPUT_PREFIX:-rhel10}"
 DATE=$(date -u +%Y%m%d%H)
 OUTPUT_QCOW2="/tmp/${OUTPUT_PREFIX}-${DATE}.qcow2"
+# Log file tied to the output image serial — never collides across builds.
+# Caller should NOT redirect stdout to a generic name; use this path instead.
+BUILD_LOG="/tmp/${OUTPUT_PREFIX}-build-${DATE}.log"
 COCO_SCRIPTS_DIR="${REPO_ROOT}/rhel10-experimental/coco-podvm-scripts"
 COS_BUCKET="coon-coco-us-east"
 COS_REGION="us-east"
@@ -62,9 +65,15 @@ echo "================================================================="
 echo "RHEL 10 peer pod overlay build"
 echo "  Base QCOW2:  $BASE_QCOW2"
 echo "  Output:      $OUTPUT_QCOW2"
+echo "  Build log:   $BUILD_LOG"
 echo "  Payload tag: $PAYLOAD_TAG"
 echo "  SSHD:        $SSHD_SERVICE"
 echo "================================================================="
+
+# Tee all subsequent output to the build log as well as stdout.
+# If a caller already redirects stdout (nohup ... > somefile), that file
+# will also receive everything — but the canonical log is $BUILD_LOG.
+exec > >(tee -a "$BUILD_LOG") 2>&1
 
 # Verify host tools
 for tool in sgdisk qemu-img qemu-nbd guestfish; do
@@ -117,6 +126,11 @@ echo "✓ IBM overlay scripts copied"
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Step 3: Building coco-podvm container ---"
+# Delete any stale cached image first. If a previous build left an old
+# localhost/coco-podvm with old binaries baked in via ADD scripts, create-verity-podvm.sh
+# will fall back to it when its inner podman build fails — silently injecting old binaries.
+# (See Lesson 20 in LESSONS_LEARNED_2026-10-02.md)
+podman rmi localhost/coco-podvm 2>/dev/null && echo "✓ Removed stale coco-podvm image" || echo "  (no stale image to remove)"
 cd "${COCO_SCRIPTS_DIR}"
 export ORG_ID ACTIVATION_KEY
 podman build -t coco-podvm \
@@ -139,6 +153,9 @@ export PODVM_BINARY="registry.redhat.io/openshift-sandboxed-containers/osc-podvm
 export SSHD_SERVICE="${SSHD_SERVICE}"
 export NVIDIA_DRIVER_VERSION=""
 export DEBUG_BUILD="${DEBUG_BUILD:-}"
+# ACTIVATION_KEY must be exported so create-verity-podvm.sh's inner podman build can pass
+# it as --secret. If it's missing, the inner build fails and falls back to stale cache.
+export ACTIVATION_KEY ORG_ID
 
 cd "${COCO_SCRIPTS_DIR}"
 bash example_run.sh "${OUTPUT_QCOW2}"
@@ -157,6 +174,27 @@ if [[ ! -f "${VERIFY_SCRIPT}" ]]; then
     echo "ERROR: verify-qcow2.sh not found at ${VERIFY_SCRIPT}" >&2; exit 1
 fi
 bash "${VERIFY_SCRIPT}" "${OUTPUT_QCOW2}"
+
+# ---------------------------------------------------------------------------
+# STEP 5b: Assert CDH binary is from the expected payload (not stale cache)
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Step 5b: Asserting CDH binary timestamp ---"
+CDH_MTIME=$(guestfish --ro -a "${OUTPUT_QCOW2}" -- run : mount /dev/sda2 / : stat /usr/local/bin/confidential-data-hub 2>/dev/null | awk '/^mtime:/{print $2}')
+if [[ -z "${CDH_MTIME}" ]]; then
+    echo "ERROR: could not read CDH binary mtime from QCOW2" >&2; exit 1
+fi
+CDH_DATE=$(python3 -c "import datetime; print(datetime.datetime.utcfromtimestamp(${CDH_MTIME}).strftime('%Y-%m-%d'))")
+echo "  CDH binary date: ${CDH_DATE}"
+# Payload 1.13.1 ships July 24 2026 binaries. Reject anything older.
+CDH_EPOCH_MIN=1753315200  # 2026-07-24 00:00:00 UTC
+if [[ "${CDH_MTIME}" -lt "${CDH_EPOCH_MIN}" ]]; then
+    echo "ERROR: CDH binary is from ${CDH_DATE} — older than expected for payload ${PAYLOAD_TAG}." >&2
+    echo "       Likely cause: stale container cache served old binaries (see Lesson 20)." >&2
+    echo "       Fix: re-run build — Step 3 now deletes stale cache before rebuild." >&2
+    exit 1
+fi
+echo "✓ CDH binary date ${CDH_DATE} is acceptable for payload ${PAYLOAD_TAG}"
 
 echo ""
 echo "✓ All verification checks passed. Ready to upload."
