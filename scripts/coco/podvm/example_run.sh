@@ -31,6 +31,16 @@ fi
 [[ -n "$PODVM_BINARY_DIGEST" ]] && run_extras+=" -e PODVM_BINARY_DIGEST=$PODVM_BINARY_DIGEST "
 [[ -n "$DEBUG_BUILD" ]] && run_extras+=" -e DEBUG_BUILD=${DEBUG_BUILD} "
 
+# Bind-mount root's registry auth into the container so podman inside can pull from
+# registry.redhat.io. sudo podman login writes to /run/containers/0/auth.json;
+# podman inside the container respects REGISTRY_AUTH_FILE pointing there.
+AUTH_JSON="/run/containers/0/auth.json"
+if [[ -f "${AUTH_JSON}" ]]; then
+    run_extras+=" -v ${AUTH_JSON}:/run/containers/0/auth.json:ro -e REGISTRY_AUTH_FILE=/run/containers/0/auth.json "
+else
+    echo "WARNING: ${AUTH_JSON} not found — podman pull inside container may fail for private registries" >&2
+fi
+
 # sudo-rs (this Ubuntu build host) resets env by default; use --preserve-env so podman
 # secret create can read ACTIVATION_KEY / ORG_ID from the environment.
 [[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && \
