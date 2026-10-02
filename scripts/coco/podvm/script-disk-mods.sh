@@ -21,17 +21,14 @@ set -ex
 # CoCo runtime dependencies
 dnf install -y xmlsec1 xmlsec1-openssl
 
-# SSH server — installed by default so debug SSH access works.
-# Skipped for hardened images (SSHD_SERVICE=false) since masking a non-existent
-# service is harmless but installing openssh-server in a hardened image wastes
-# space and attack surface.
-if [ "${SSHD_SERVICE:-true}" != "false" ]; then
-    dnf install -y openssh-server
-    systemctl enable sshd.service
-    echo "✓ openssh-server installed and enabled"
-else
-    echo "SSHD_SERVICE=false — skipping openssh-server install"
-fi
+# SSH server — always installed so podvm_maker.sh can mask/enable it based on
+# SSHD_SERVICE. virt-customize --run does not propagate container env vars into
+# the guest, so we cannot gate on SSHD_SERVICE here. The mask decision is made
+# later in podvm_maker.sh which runs via a separate virt-customize invocation
+# that DOES have access to the env (via --run-command with the value baked in).
+dnf install -y openssh-server
+systemctl enable sshd.service
+echo "✓ openssh-server installed and enabled (podvm_maker.sh will mask if SSHD_SERVICE=false)"
 
 # ---------------------------------------------------------------------------
 # NVIDIA drivers (optional — gated by NVIDIA_DRIVER_VERSION env var)
