@@ -112,6 +112,7 @@ function print_params()
 
 function handle_ctrlc()
 {
+    local EXIT_CODE=$?
     if [[ $root_mounted == 1 ]]; then
         umount $VERITY_FOLDER/mnt
     fi
@@ -123,7 +124,10 @@ function handle_ctrlc()
     fi
     # rm -rf $VERITY_FOLDER
     cd $here
-    exit 0
+    # IBM MOD: preserve the original exit code — upstream always exits 0 from the trap,
+    # which means set -e failures inside verity.sh are swallowed and create-verity-podvm.sh
+    # continues to print "Process completed!" even on fatal errors.
+    exit $EXIT_CODE
 }
 
 trap handle_ctrlc SIGINT
@@ -163,14 +167,23 @@ function resize_disk()
     # file path uses file_length (not virtual-size) as disk size, placing the backup
     # header at the wrong offset. After nbd exposes the full virtual disk the GPT is
     # corrupt → find_efi_root_part() fails → verity never runs.
+    #
+    # Note: nbd connect requires partprobe + settle + sleep before sgdisk can read the
+    # partition table reliably. udevadm settle alone is not sufficient — the kernel
+    # partition table read is asynchronous. Without the sleep, sgdisk sees MBR (read
+    # error 22 = EINVAL on uninitialized offsets) and exits 0 with "Non-GPT disk".
     # Deviation #9 in UPSTREAM_DEVIATIONS.md.
     echo "Relocating GPT backup header to end of disk (via nbd block device)..."
     qemu-nbd -c "$NBD_DEVICE" -f "$DISK_FORMAT" "$DISK_RESIZE"
     udevadm settle
+    partprobe "$NBD_DEVICE"
+    udevadm settle
+    sleep 2
     sgdisk -e "$NBD_DEVICE"
     SGDISK_RC=$?
     qemu-nbd --disconnect "$NBD_DEVICE"
     udevadm settle
+    sleep 1
     if [[ $SGDISK_RC -ne 0 ]]; then
         echo "ERROR: sgdisk -e failed (rc=$SGDISK_RC)" >&2
         exit 1
