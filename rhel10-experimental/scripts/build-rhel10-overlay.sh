@@ -183,7 +183,7 @@ if [[ "${TARBALL_PRESENT}" == "YES" ]]; then
     echo "       See Lesson 21 in LESSONS_LEARNED_2026-10-02.md." >&2
     exit 1
 fi
-echo "  ✓ No pre-baked tarball in container — get-artifacts.sh will download from ${PODVM_BINARY}"
+echo "  ✓ No pre-baked tarball in container — get-artifacts.sh will download osc-podvm-payload-rhel9:${PAYLOAD_TAG}"
 
 # ---------------------------------------------------------------------------
 # STEP 4: Run CoCo + Uptycs overlay via example_run.sh
