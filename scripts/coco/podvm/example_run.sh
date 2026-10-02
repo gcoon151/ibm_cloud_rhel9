@@ -1,6 +1,9 @@
 #! /bin/bash
+set -euo pipefail
 # IBM overlay of upstream coco-podvm-scripts/example_run.sh
 # Changes vs upstream:
+#   - set -euo pipefail: any unchecked failure now exits non-zero (previously
+#     podman run could crash and the caller would see exit 0)
 #   - Added -v /boot:/boot:ro  (supermin needs host kernel in /boot to build appliance)
 #   - Added -v /dev:/dev       (needed for nbd and block device access)
 # These two mounts fix the "supermin: failed to find a suitable kernel" error
@@ -18,9 +21,17 @@ IMAGE_PRIVATE_KEY=$3
 # NOTE: build-rhel10-overlay.sh already built coco-podvm into root's store in Step 3.
 # This second build (inside example_run.sh) is a belt-and-suspenders fallback.
 # sudo-rs resets env; --preserve-env passes the secrets through.
-sudo --preserve-env=ACTIVATION_KEY,ORG_ID podman build -t coco-podvm \
+# Failure here is fatal — if the cached image is also missing we cannot proceed.
+if ! sudo --preserve-env=ACTIVATION_KEY,ORG_ID podman build -t coco-podvm \
     ${SM_SECRET_BUILD_CMD} \
-    -f Dockerfile . || printf "\n\n!!! Faild to build coco-podvm, will used cached image if it exists !!!\n"
+    -f Dockerfile .; then
+    # Build failed — only continue if a cached image exists in root's store
+    if ! sudo podman image exists localhost/coco-podvm; then
+        echo "ERROR: podman build failed AND no cached localhost/coco-podvm image found — cannot run overlay" >&2
+        exit 1
+    fi
+    echo "WARNING: podman build failed but cached localhost/coco-podvm exists — using cache"
+fi
 
 if [[ -n "${IMAGE_CERTIFICATE_PEM}" && -n "${IMAGE_PRIVATE_KEY}" ]]; then
     CERT_OPTIONS="-v $IMAGE_CERTIFICATE_PEM:/public.pem:ro,Z -v $IMAGE_PRIVATE_KEY:/private.key:ro,Z"
@@ -55,7 +66,15 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -n "$DEBUG_BUILD" ]] && run_extras+=" -v ${SCRIPT_DIR}/scripts/coco/podvm/script-disk-mods.sh:/scripts/coco/podvm/script-disk-mods.sh:ro "
 
-sudo podman run --rm \
+# Clean up secrets on exit regardless of success or failure
+_cleanup_secrets() {
+    [[ -n "${ACTIVATION_KEY:-}" && -n "${ORG_ID:-}" ]] && \
+        sudo podman secret rm activation_key org_id 2>/dev/null || true
+}
+trap _cleanup_secrets EXIT
+
+echo "Running coco-podvm container overlay..."
+if ! sudo podman run --rm \
     --privileged \
     -v $QCOW2:/disk.qcow2 \
     $CERT_OPTIONS \
@@ -69,6 +88,12 @@ sudo podman run --rm \
     --mount type=bind,source=/dev,target=/dev \
     --mount type=bind,source=/run/udev,target=/run/udev \
     $run_extras \
-    localhost/coco-podvm
-
-[[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && sudo podman secret rm activation_key org_id
+    localhost/coco-podvm; then
+    echo "" >&2
+    echo "ERROR: coco-podvm container exited non-zero — overlay FAILED" >&2
+    echo "       The QCOW2 at $QCOW2 is likely incomplete or corrupt." >&2
+    echo "       Check the output above for 'Input/output error', 'Failed to setup verity'," >&2
+    echo "       'modprobe: FATAL', or 'Process completed!' (absence = build did not finish)." >&2
+    exit 1
+fi
+echo "✓ coco-podvm container completed successfully"

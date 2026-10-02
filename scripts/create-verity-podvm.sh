@@ -127,7 +127,24 @@ function get_input_img_format() {
 function handle_ctrlc()
 {
     cd $here
-    exit 0
+    exit 130  # SIGINT convention
+}
+
+# IBM MOD: EXIT trap must preserve the real exit code, not force exit 0.
+# The original handle_ctrlc called exit 0 on EXIT, which silently swallowed
+# any set -e failure (verity I/O error, nbd crash, etc.) — the container
+# exited 0 and "Process completed!" was never printed, yet the caller saw
+# success. Now we only override the exit code for SIGINT.
+function handle_exit()
+{
+    RC=$?
+    cd $here
+    if [ $RC -ne 0 ]; then
+        echo "" >&2
+        echo "ERROR: create-verity-podvm.sh exited with code $RC — build FAILED" >&2
+        echo "       The QCOW2 is incomplete. Check output above for the root cause." >&2
+    fi
+    exit $RC
 }
 
 WORK_FOLDER=${WORK_FOLDER:-$(mktemp -d)}
@@ -140,7 +157,7 @@ cd $WORK_FOLDER
 storage_account_created=0
 
 trap handle_ctrlc SIGINT
-trap handle_ctrlc EXIT
+trap handle_exit EXIT
 
 get_input_img_format $INPUT_IMAGE
 
