@@ -157,6 +157,13 @@ export DEBUG_BUILD="${DEBUG_BUILD:-}"
 # it as --secret. If it's missing, the inner build fails and falls back to stale cache.
 export ACTIVATION_KEY ORG_ID
 
+# Resolve payload digest now (before container run) so podvm_maker.sh can bake it
+# into /etc/podvm-version.json. Pull to local store if not already present.
+echo "  Resolving payload digest for ${PODVM_BINARY}..."
+podman pull "${PODVM_BINARY}" 2>/dev/null | tail -1 || true
+export PODVM_BINARY_DIGEST=$(podman inspect --format '{{index .RepoDigests 0}}' "${PODVM_BINARY}" 2>/dev/null || echo "unknown")
+echo "  PODVM_BINARY_DIGEST: ${PODVM_BINARY_DIGEST}"
+
 cd "${COCO_SCRIPTS_DIR}"
 bash example_run.sh "${OUTPUT_QCOW2}"
 cd "${REPO_ROOT}"
