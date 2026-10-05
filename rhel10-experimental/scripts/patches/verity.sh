@@ -348,8 +348,10 @@ function create_uki_addon()
 
     # IBM MOD: Assert verity addon was actually written — check BEFORE unmounting ESP.
     # Deviation #11 in UPSTREAM_DEVIATIONS.md.
-    # Must run here while mnt/ is still mounted; $UKI_NAME is a path under mnt/.
-    if [[ ! -f "$UKI_NAME.extra.d/$ADDON_NAME" ]]; then
+    # We already cd'd into $UKI_NAME.extra.d so $ADDON_NAME is a bare filename here.
+    # Checking the full path ($UKI_NAME.extra.d/$ADDON_NAME) is wrong — it would be
+    # relative to the already-changed CWD and always fail even when the file exists.
+    if [[ ! -f "$ADDON_NAME" ]]; then
         echo "ERROR: $UKI_NAME.extra.d/$ADDON_NAME not found after ukify build" >&2
         exit 1
     fi
