@@ -5,21 +5,26 @@ dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStrea
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
 
-# Patch agent-config.toml: Red Hat's payload ships with guest_components_procs = "none"
-# which breaks the AA→CDH→kata-agent activation chain (kata-agent.path waits for
-# cdh.sock, which CDH only creates when AA runs first; with "none" AA never starts
-# via kata-agent's internal launcher and the chain stalls).
-# The correct value for IBM Cloud CoCo peer pods is "confidential_data_hub" — this
-# makes kata-agent launch AA and CDH as sub-processes at startup.
+# Patch agent-config.toml: add image_registry_auth if missing (upstream payload omits it).
+# Note: guest_components_procs = "none" is correct — AA and CDH are launched by their
+# own systemd path units (attestation-agent.path, confidential-data-hub.path), not as
+# sub-processes of kata-agent.
 echo "Patching agent-config.toml..."
-sed -i 's/guest_components_procs = "none"/guest_components_procs = "confidential_data_hub"/' /etc/agent-config.toml
-echo "✓ Set guest_components_procs = confidential_data_hub"
 if ! grep -q "image_registry_auth" /etc/agent-config.toml; then
     echo 'image_registry_auth = "file:///run/peerpod/auth.json"' >> /etc/agent-config.toml
     echo "✓ Added image_registry_auth to agent-config.toml"
 else
     echo "✓ image_registry_auth already present in agent-config.toml"
 fi
+
+# Enable confidential-data-hub.path — the OSC payload installs the unit file but does
+# NOT create the symlink in multi-user.target.wants. Without it CDH never starts,
+# cdh.sock never appears, and kata-agent.path never fires (CreateContainer timeout).
+echo "Enabling confidential-data-hub.path..."
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sf /etc/systemd/system/confidential-data-hub.path \
+       /etc/systemd/system/multi-user.target.wants/confidential-data-hub.path
+echo "✓ confidential-data-hub.path enabled"
 # NOTE: enable_signature_verification is intentionally NOT baked into the image.
 # When baked in, it causes CreateSandbox to fail with the nosigning initdata
 # because kata-agent tries to fetch the image policy from KBS before the container
