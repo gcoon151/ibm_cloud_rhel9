@@ -345,17 +345,19 @@ function create_uki_addon()
     /usr/lib/systemd/ukify build --cmdline="roothash=$RH systemd.volatile=overlay" --output=$ADDON_NAME --sbat="$ADDON_SBAT" $ADDON_OPTIONS
     echo "Created UKI addon $UKI_NAME.extra.d/$ADDON_NAME"
     /usr/lib/systemd/ukify inspect $ADDON_NAME
-    cd - > /dev/null
-    esp_mounted=0
-    umount mnt
 
-    # IBM MOD: Assert verity addon was actually written.
+    # IBM MOD: Assert verity addon was actually written — check BEFORE unmounting ESP.
     # Deviation #11 in UPSTREAM_DEVIATIONS.md.
+    # Must run here while mnt/ is still mounted; $UKI_NAME is a path under mnt/.
     if [[ ! -f "$UKI_NAME.extra.d/$ADDON_NAME" ]]; then
         echo "ERROR: $UKI_NAME.extra.d/$ADDON_NAME not found after ukify build" >&2
         exit 1
     fi
     echo "✓ Verity addon present: $UKI_NAME.extra.d/$ADDON_NAME"
+
+    cd - > /dev/null
+    esp_mounted=0
+    umount mnt
 }
 
 print_params
