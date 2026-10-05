@@ -5,8 +5,15 @@ dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStrea
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
 
-# Patch agent-config.toml: Red Hat's payload only has 2 lines; we add image_registry_auth.
+# Patch agent-config.toml: Red Hat's payload ships with guest_components_procs = "none"
+# which breaks the AA→CDH→kata-agent activation chain (kata-agent.path waits for
+# cdh.sock, which CDH only creates when AA runs first; with "none" AA never starts
+# via kata-agent's internal launcher and the chain stalls).
+# The correct value for IBM Cloud CoCo peer pods is "confidential_data_hub" — this
+# makes kata-agent launch AA and CDH as sub-processes at startup.
 echo "Patching agent-config.toml..."
+sed -i 's/guest_components_procs = "none"/guest_components_procs = "confidential_data_hub"/' /etc/agent-config.toml
+echo "✓ Set guest_components_procs = confidential_data_hub"
 if ! grep -q "image_registry_auth" /etc/agent-config.toml; then
     echo 'image_registry_auth = "file:///run/peerpod/auth.json"' >> /etc/agent-config.toml
     echo "✓ Added image_registry_auth to agent-config.toml"
