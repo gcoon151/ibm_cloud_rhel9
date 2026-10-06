@@ -1,9 +1,58 @@
 #! /bin/bash
+set -euo pipefail
 
-dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/ && dnf install -y --nogpgcheck e2fsprogs && dnf clean all && dnf config-manager --set-disabled "*centos*"
+# ---------------------------------------------------------------------------
+# Step 1: Install e2fsprogs (needed for luks-scratch mkfs.ext4 at runtime)
+# ---------------------------------------------------------------------------
+echo "=== [1/6] Installing e2fsprogs ==="
+dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/
+dnf install -y --nogpgcheck e2fsprogs
+dnf clean all
+dnf config-manager --set-disabled "*centos*"
+echo "✓ e2fsprogs installed: $(rpm -q e2fsprogs)"
 
+# ---------------------------------------------------------------------------
+# Step 2: Extract payload tarballs and assert binaries landed correctly
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== [2/6] Extracting payload tarballs ==="
+echo "  podvm-binaries.tar.gz: $(ls -lh /tmp/podvm-binaries.tar.gz 2>/dev/null || echo 'NOT FOUND')"
+echo "  pause-bundle.tar.gz:   $(ls -lh /tmp/pause-bundle.tar.gz   2>/dev/null || echo 'NOT FOUND')"
+echo "  luks-config.tar.gz:    $(ls -lh /tmp/luks-config.tar.gz    2>/dev/null || echo 'NOT FOUND')"
+
+if [[ ! -f /tmp/podvm-binaries.tar.gz ]]; then
+    echo "ERROR: /tmp/podvm-binaries.tar.gz not found — payload injection failed upstream" >&2
+    exit 1
+fi
+if [[ ! -f /tmp/pause-bundle.tar.gz ]]; then
+    echo "ERROR: /tmp/pause-bundle.tar.gz not found" >&2
+    exit 1
+fi
+
+echo "  Extracting podvm-binaries.tar.gz..."
 tar -xzvf /tmp/podvm-binaries.tar.gz -C /
+echo "✓ podvm-binaries extracted"
+
+echo "  Extracting pause-bundle.tar.gz..."
 tar -xzvf /tmp/pause-bundle.tar.gz -C /
+echo "✓ pause-bundle extracted"
+
+# Assert critical binaries landed in /usr/local/bin/
+echo "  Asserting key binaries present in /usr/local/bin/ ..."
+for binary in kata-agent agent-protocol-forwarder kata-agent-clean; do
+    if [[ ! -f /usr/local/bin/${binary} ]]; then
+        echo "ERROR: /usr/local/bin/${binary} missing after tar extraction" >&2
+        echo "  Tarball top-level usr/local/bin entries:" >&2
+        tar -tzf /tmp/podvm-binaries.tar.gz 2>/dev/null | grep "usr/local/bin/" | head -20 >&2
+        exit 1
+    fi
+    echo "  ✓ /usr/local/bin/${binary} ($(ls -lh /usr/local/bin/${binary} | awk '{print $5}'))"
+done
+if [[ ! -f /etc/agent-config.toml ]]; then
+    echo "ERROR: /etc/agent-config.toml missing after tar extraction" >&2
+    exit 1
+fi
+echo "  ✓ /etc/agent-config.toml present"
 
 # Patch agent-config.toml: add image_registry_auth if missing (upstream payload omits it).
 # Note: guest_components_procs = "none" is correct — AA and CDH are launched by their
@@ -31,18 +80,39 @@ echo "✓ confidential-data-hub.path enabled"
 # starts, and KBS attestation fails in that context. The signing config is
 # applied at the cluster level via initdata when signature verification is needed.
 
-# set luks
-# TODO: move to payload ?
+# ---------------------------------------------------------------------------
+# Step 3: Extract luks-config and assert service file present
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== [3/6] Extracting luks-config.tar.gz ==="
+if [[ ! -f /tmp/luks-config.tar.gz ]]; then
+    echo "ERROR: /tmp/luks-config.tar.gz not found" >&2
+    exit 1
+fi
 tar -xzvf /tmp/luks-config.tar.gz -C /
+if [[ ! -f /etc/systemd/system/luks-scratch.service ]]; then
+    echo "ERROR: luks-scratch.service missing after luks-config extraction" >&2
+    exit 1
+fi
+echo "✓ luks-config extracted, luks-scratch.service present"
 
+# ---------------------------------------------------------------------------
+# Step 4: SELinux context fixes
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== [4/6] Fixing SELinux contexts ==="
 # fixes a failure of the podns@netns service
 semanage fcontext -a -t bin_t /usr/sbin/ip && restorecon -v /usr/sbin/ip
-
-# Fix SELinux context for kata-agent binaries
+# kata-agent binaries
 semanage fcontext -a -t bin_t /usr/local/bin/kata-agent && restorecon -v /usr/local/bin/kata-agent
 semanage fcontext -a -t bin_t /usr/local/bin/kata-agent-clean && restorecon -v /usr/local/bin/kata-agent-clean
+echo "✓ SELinux contexts set"
 
-# Configure SSHD service - PLACEHOLDER will be replaced by remote-build.sh
+# ---------------------------------------------------------------------------
+# Step 5: System configuration (SSHD, services, systemd units)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== [5/6] System configuration ==="
 BUILD_LOG="/var/log/podvm-build.log"
 mkdir -p /var/log
 
@@ -131,10 +201,11 @@ ExecStartPre=-/bin/mount -t iso9660 -o ro /dev/disk/by-label/cidata /media/cidat
 ExecStartPost=-/bin/bash -c 'tpm2_pcrextend 8:sha256=\$(head -c64 /run/peerpod/initdata.digest)'
 EOF
 
-# Install Uptycs EDR agent
-echo "=========================================="
-echo "Installing Uptycs EDR agent..."
-echo "=========================================="
+# ---------------------------------------------------------------------------
+# Step 6: Install Uptycs EDR agent
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== [6/6] Installing Uptycs EDR agent ==="
 
 # Debug: List files in /scripts/coco/podvm/
 echo "DEBUG: Files in /scripts/coco/podvm/:"
