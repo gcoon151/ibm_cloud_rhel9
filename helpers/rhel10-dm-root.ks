@@ -93,9 +93,14 @@ poweroff
 #   only). It intentionally has no verity protection because it must be writable.
 ignoredisk --only-use=sda
 clearpart --none --initlabel
-part /boot/efi  --fstype="efi"  --ondisk=sda --size=512 --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
-part /          --fstype="ext4" --ondisk=sda --grow --maxsize=0
+part /boot/efi     --fstype="efi"  --ondisk=sda --size=512 --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
+part /             --fstype="ext4" --ondisk=sda --grow --maxsize=0
 part /var/lib/rhsm --fstype="ext4" --ondisk=sda --size=128 --label=rhsm-rw
+# NOTE: --grow must come before the fixed-size partition so Anaconda assigns
+# sda1=EFI, sda2=root(grow), sda3=rhsm-rw(128MB) in that order.
+# The --label here sets the ext4 filesystem label (e2label), not the GPT
+# partition name. The %post sfdisk call below fixes sda2's GUID; sda3 keeps
+# the default linux-generic GUID which is correct for a data partition.
 
 %packages
 @^minimal-environment
@@ -140,10 +145,12 @@ kernel-modules-extra
 # Fix partition GUIDs — Anaconda may reset them during install.
 # Linux x86-64 root: 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 # EFI System:        C12A7328-F81F-11D2-BA4B-00A0C93EC93B
-# rhsm-rw (linux-generic): 0FC63DAF-8483-4772-8E79-3D69D8477DE4
+# rhsm-rw (sda3, linux-generic): 0FC63DAF-8483-4772-8E79-3D69D8477DE4 — no change needed
 sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 sfdisk --part-type /dev/sda 1 C12A7328-F81F-11D2-BA4B-00A0C93EC93B
-# sda3 (rhsm-rw) keeps the default linux-generic GUID — no change needed.
+# Set GPT partition name on sda3 so rebuild-base-rhel10.sh can identify it.
+# (--label in kickstart sets ext4 filesystem label, not GPT name.)
+sfdisk --part-label /dev/sda 3 rhsm-rw
 
 # Add fstab entries for RHSM writable paths (deviation #14).
 # /var/lib/rhsm is on the rhsm-rw partition (already in fstab via Anaconda).
