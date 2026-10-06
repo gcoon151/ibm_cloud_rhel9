@@ -2,7 +2,8 @@
 #
 # Upstream reference: coco-podvm-scripts/helpers/rhel10-dm-root.ks
 # Deviations from upstream and rationale: rhel10-experimental/UPSTREAM_DEVIATIONS.md
-#   Key deviations: %pre partition pre-creation (#3), no WALinuxAgent (#4), no kdump (#5)
+#   Key deviations: %pre partition pre-creation (#3), no WALinuxAgent (#4), no kdump (#5),
+#                   rhsm-rw partition (#14)
 #
 # Produces a UKI-boot, dm-verity-ready base image.
 # The EFI partition is fully set up by this kickstart — kernel-install fires
@@ -70,10 +71,31 @@ poweroff
 # NOTE: %pre sfdisk + --onpart was tried in run B-1 and caused Anaconda to
 # stall (52KB written in 30 min). Reverted to upstream pattern for B-2.
 # See rhel10-experimental/BUILD_BASELINE.md Run B-1 for details.
+#
+# Partition 3 — rhsm-rw (128 MiB, plain ext4, deviation #14):
+#   IBM Cloud injects vendor-data that runs cloud-init's rh_subscription module,
+#   which calls subscription-manager. subscription-manager writes runtime state
+#   to /var/lib/rhsm/ (entitlements, certs, facts, cache — ~2-5 MB in practice).
+#   The root partition is dm-verity protected and read-only after boot, so these
+#   writes fail → rh_subscription reports failure → power_state_change powers off
+#   the VM at ~35s, before kata-agent completes its handshake.
+#
+#   Fix: a small plain ext4 partition labelled "rhsm-rw", mounted at /var/lib/rhsm
+#   via fstab (available before cloud-init's first stage). /etc/rhsm and
+#   /var/log/rhsm are covered by tmpfs entries in fstab (config is small and
+#   re-created each boot from IBM Cloud vendor-data; logs are ephemeral).
+#
+#   systemd-repart (luks-scratch) runs later and claims the remaining free space
+#   after this partition — the label "rhsm-rw" prevents repart from touching it.
+#
+#   128 MiB is generous; registered RHEL systems typically use <10 MiB here.
+#   This partition is NOT covered by dm-verity (verity covers the root partition
+#   only). It intentionally has no verity protection because it must be writable.
 ignoredisk --only-use=sda
 clearpart --none --initlabel
-part /boot/efi --fstype="efi" --ondisk=sda --size=512 --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
-part /         --fstype="ext4" --ondisk=sda --grow --maxsize=0
+part /boot/efi  --fstype="efi"  --ondisk=sda --size=512 --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
+part /          --fstype="ext4" --ondisk=sda --grow --maxsize=0
+part /var/lib/rhsm --fstype="ext4" --ondisk=sda --size=128 --label=rhsm-rw
 
 %packages
 @^minimal-environment
@@ -118,8 +140,28 @@ kernel-modules-extra
 # Fix partition GUIDs — Anaconda may reset them during install.
 # Linux x86-64 root: 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 # EFI System:        C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+# rhsm-rw (linux-generic): 0FC63DAF-8483-4772-8E79-3D69D8477DE4
 sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 sfdisk --part-type /dev/sda 1 C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+# sda3 (rhsm-rw) keeps the default linux-generic GUID — no change needed.
+
+# Add fstab entries for RHSM writable paths (deviation #14).
+# /var/lib/rhsm is on the rhsm-rw partition (already in fstab via Anaconda).
+# /etc/rhsm and /var/log/rhsm are tmpfs — small, ephemeral, re-created each boot.
+# Both are available before cloud-init's network stage (systemd mounts them from
+# fstab during early boot, before any cloud-init unit starts).
+cat >> /etc/fstab << 'EOF'
+
+# RHSM writable paths — deviation #14 (see rhel10-experimental/UPSTREAM_DEVIATIONS.md)
+# /var/lib/rhsm is already mounted via the rhsm-rw partition entry above.
+# /etc/rhsm: tmpfs so subscription-manager can write config on first boot.
+tmpfs /etc/rhsm     tmpfs defaults,size=32m,mode=0755 0 0
+# /var/log/rhsm: tmpfs for logs — ephemeral, not needed across reboots.
+tmpfs /var/log/rhsm tmpfs defaults,size=16m,mode=0755 0 0
+EOF
+
+# Create the mountpoint directories (they may not exist in the minimal install).
+mkdir -p /etc/rhsm /var/log/rhsm
 
 # Speed up kernel-install by disabling grub and dracut hooks (UKI replaces them).
 touch /etc/kernel/install.d/20-grub.install

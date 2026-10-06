@@ -192,11 +192,13 @@ SFDISK_OUT=$(sudo sfdisk -d "${RAW_TMP}" 2>/dev/null)
 sudo rm -f "${RAW_TMP}"
 echo "${SFDISK_OUT}"
 
-EFI_GUID=$(echo "${SFDISK_OUT}"  | grep 'raw1 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
-ROOT_GUID=$(echo "${SFDISK_OUT}" | grep 'raw2 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
+EFI_GUID=$(echo "${SFDISK_OUT}"   | grep 'raw1 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
+ROOT_GUID=$(echo "${SFDISK_OUT}"  | grep 'raw2 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
+RHSM_LABEL=$(echo "${SFDISK_OUT}" | grep 'raw3 ' | grep -oi 'name=[^ ,]*' | cut -d= -f2 || true)
 
-echo "  EFI  partition GUID: ${EFI_GUID}"
-echo "  Root partition GUID: ${ROOT_GUID}"
+echo "  EFI      partition GUID:  ${EFI_GUID}"
+echo "  Root     partition GUID:  ${ROOT_GUID}"
+echo "  rhsm-rw  partition label: ${RHSM_LABEL}"
 
 GUID_OK=true
 if ! echo "${EFI_GUID}" | grep -qi "C12A7328"; then
@@ -207,13 +209,19 @@ if ! echo "${ROOT_GUID}" | grep -qi "4F68BCE3"; then
     echo "ERROR: Root partition GUID wrong. Expected 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709" >&2
     GUID_OK=false
 fi
+if ! echo "${RHSM_LABEL}" | grep -qi "rhsm-rw"; then
+    echo "ERROR: rhsm-rw partition (sda3) not found. Expected label 'rhsm-rw'." >&2
+    echo "       This partition is required for RHSM write paths (deviation #14)." >&2
+    echo "       Check that the kickstart 'part /var/lib/rhsm' directive is present." >&2
+    GUID_OK=false
+fi
 if [[ "${GUID_OK}" = false ]]; then
-    echo "GUID check failed. Image left at ${OUTPUT_IMAGE} for inspection." >&2
+    echo "GUID/partition check failed. Image left at ${OUTPUT_IMAGE} for inspection." >&2
     echo "Run: sudo sfdisk -d <(sudo qemu-img convert -f qcow2 -O raw ${OUTPUT_IMAGE} /dev/stdout)" >&2
     echo "Then fix the kickstart and rebuild." >&2
     exit 1
 fi
-echo "✓ Partition GUIDs correct"
+echo "✓ Partition GUIDs correct, rhsm-rw partition present"
 
 # --- Step 4: Confirm UKI is in EFI partition --------------------------------
 echo ""
