@@ -142,15 +142,24 @@ kernel-modules-extra
 %end
 
 %post --erroronfail
-# Fix partition GUIDs — Anaconda may reset them during install.
-# Linux x86-64 root: 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
-# EFI System:        C12A7328-F81F-11D2-BA4B-00A0C93EC93B
-# rhsm-rw (sda3, linux-generic): 0FC63DAF-8483-4772-8E79-3D69D8477DE4 — no change needed
-sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
+# Fix partition GUIDs and names.
+#
+# Anaconda always allocates fixed-size partitions before --grow partitions,
+# regardless of declaration order in the kickstart. With our three partitions:
+#   sda1 = EFI       (512 MiB, fixed)
+#   sda2 = rhsm-rw   (128 MiB, fixed)   ← Anaconda puts fixed-size first
+#   sda3 = root      (rest of disk, --grow)
+#
+# GUIDs:
+#   sda1 EFI System:        C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+#   sda3 Linux x86-64 root: 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
+#   sda2 rhsm-rw:           0FC63DAF-8483-4772-8E79-3D69D8477DE4 (linux-generic default, no change)
+
 sfdisk --part-type /dev/sda 1 C12A7328-F81F-11D2-BA4B-00A0C93EC93B
-# Set GPT partition name on sda3 so rebuild-base-rhel10.sh can identify it.
-# (--label in kickstart sets ext4 filesystem label, not GPT name.)
-sfdisk --part-label /dev/sda 3 rhsm-rw
+sfdisk --part-type /dev/sda 3 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
+# Set GPT partition name on sda2 (rhsm-rw) so rebuild-base-rhel10.sh can identify it.
+# (--label in kickstart sets the ext4 filesystem label only, not the GPT partition name.)
+sfdisk --part-label /dev/sda 2 rhsm-rw
 
 # Add fstab entries for RHSM writable paths (deviation #14).
 # /var/lib/rhsm is on the rhsm-rw partition (already in fstab via Anaconda).

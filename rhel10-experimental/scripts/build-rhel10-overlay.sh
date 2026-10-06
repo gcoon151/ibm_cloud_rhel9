@@ -269,7 +269,7 @@ echo "--- Step 5b: Verifying CDH binary identity in QCOW2 ---"
 # Extract CDH binary from QCOW2 for inspection
 CDH_TMPDIR=$(mktemp -d /tmp/cdh-check-XXXXXX)
 guestfish --ro -a "${OUTPUT_QCOW2}" -- \
-    run : mount /dev/sda2 / : download /usr/local/bin/confidential-data-hub "${CDH_TMPDIR}/confidential-data-hub"
+    run : mount /dev/sda3 / : download /usr/local/bin/confidential-data-hub "${CDH_TMPDIR}/confidential-data-hub"
 CDH_BIN="${CDH_TMPDIR}/confidential-data-hub"
 
 if [[ ! -f "${CDH_BIN}" ]]; then
@@ -278,7 +278,7 @@ if [[ ! -f "${CDH_BIN}" ]]; then
 fi
 
 # Check 1: mtime via guestfish stat (April 3 stale = epoch ~1743703200)
-CDH_MTIME=$(guestfish --ro -a "${OUTPUT_QCOW2}" -- run : mount /dev/sda2 / : \
+CDH_MTIME=$(guestfish --ro -a "${OUTPUT_QCOW2}" -- run : mount /dev/sda3 / : \
     stat /usr/local/bin/confidential-data-hub 2>/dev/null | awk '/^mtime:/{print $2}')
 CDH_DATE=$(python3 -c "import datetime; print(datetime.datetime.utcfromtimestamp(${CDH_MTIME:-0}).strftime('%Y-%m-%d'))")
 echo "  mtime:  ${CDH_DATE} (epoch ${CDH_MTIME})"

@@ -192,13 +192,17 @@ SFDISK_OUT=$(sudo sfdisk -d "${RAW_TMP}" 2>/dev/null)
 sudo rm -f "${RAW_TMP}"
 echo "${SFDISK_OUT}"
 
+# Partition layout (Anaconda puts fixed-size before --grow):
+#   sda1 = EFI (512 MiB)
+#   sda2 = rhsm-rw (128 MiB, fixed)
+#   sda3 = root (rest of disk, --grow)
 EFI_GUID=$(echo "${SFDISK_OUT}"   | grep 'raw1 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
-ROOT_GUID=$(echo "${SFDISK_OUT}"  | grep 'raw2 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
-RHSM_LABEL=$(echo "${SFDISK_OUT}" | grep 'raw3 ' | grep -oi 'name=[^ ,]*' | cut -d= -f2 || true)
+ROOT_GUID=$(echo "${SFDISK_OUT}"  | grep 'raw3 ' | grep -oi 'type=[0-9A-Fa-f-]*' | cut -d= -f2 || true)
+RHSM_LABEL=$(echo "${SFDISK_OUT}" | grep 'raw2 ' | grep -oi 'name=[^ ,]*' | cut -d= -f2 || true)
 
-echo "  EFI      partition GUID:  ${EFI_GUID}"
-echo "  Root     partition GUID:  ${ROOT_GUID}"
-echo "  rhsm-rw  partition label: ${RHSM_LABEL}"
+echo "  EFI      partition GUID:  ${EFI_GUID}  (sda1)"
+echo "  rhsm-rw  partition label: ${RHSM_LABEL}  (sda2)"
+echo "  Root     partition GUID:  ${ROOT_GUID}  (sda3)"
 
 GUID_OK=true
 if ! echo "${EFI_GUID}" | grep -qi "C12A7328"; then
@@ -210,7 +214,7 @@ if ! echo "${ROOT_GUID}" | grep -qi "4F68BCE3"; then
     GUID_OK=false
 fi
 if ! echo "${RHSM_LABEL}" | grep -qi "rhsm-rw"; then
-    echo "ERROR: rhsm-rw partition (sda3) not found. Expected label 'rhsm-rw'." >&2
+    echo "ERROR: rhsm-rw partition (sda2) not found. Expected label 'rhsm-rw'." >&2
     echo "       This partition is required for RHSM write paths (deviation #14)." >&2
     echo "       Check that the kickstart 'part /var/lib/rhsm' directive is present." >&2
     GUID_OK=false
