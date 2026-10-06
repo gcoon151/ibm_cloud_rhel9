@@ -115,8 +115,10 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- [5] Key binaries in rootfs ---"
+# RHEL 10 disk layout: sda1=EFI, sda2=rhsm-rw(128MB), sda3=root, sda4=scratch(runtime), sda5=verity(build)
+# Root is sda3. See docs/BUILD_ARCHITECTURE.md for full partition table.
 for BIN in kata-agent agent-protocol-forwarder; do
-    FOUND=$(guestfish --ro -a "$QCOW2" -m /dev/sda2 -- ls /usr/local/bin/ 2>/dev/null | grep "^${BIN}$" || true)
+    FOUND=$(guestfish --ro -a "$QCOW2" -m /dev/sda3 -- ls /usr/local/bin/ 2>/dev/null | grep "^${BIN}$" || true)
     if [[ -n "$FOUND" ]]; then
         ok "$BIN present in /usr/local/bin/"
     else
