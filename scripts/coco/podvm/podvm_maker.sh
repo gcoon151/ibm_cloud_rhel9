@@ -2,14 +2,18 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Step 1: Install e2fsprogs (needed for luks-scratch mkfs.ext4 at runtime)
+# Step 1: Verify e2fsprogs (needed for luks-scratch mkfs.ext4 at runtime)
 # ---------------------------------------------------------------------------
-echo "=== [1/6] Installing e2fsprogs ==="
-dnf config-manager --add-repo=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os/
-dnf install -y --nogpgcheck e2fsprogs
-dnf clean all
-dnf config-manager --set-disabled "*centos*"
-echo "✓ e2fsprogs installed: $(rpm -q e2fsprogs)"
+# e2fsprogs is pre-installed in the coco-podvm container via the Dockerfile.
+# Previously this step added mirror.stream.centos.org as a repo to install it,
+# but that mirror is flaky and e2fsprogs is already present — no install needed.
+# ---------------------------------------------------------------------------
+echo "=== [1/6] Verifying e2fsprogs ==="
+if ! rpm -q e2fsprogs &>/dev/null; then
+    echo "ERROR: e2fsprogs not found — install it in the coco-podvm Dockerfile" >&2
+    exit 1
+fi
+echo "✓ e2fsprogs already installed: $(rpm -q e2fsprogs)"
 
 # ---------------------------------------------------------------------------
 # Step 2: Extract payload tarballs and assert binaries landed correctly
