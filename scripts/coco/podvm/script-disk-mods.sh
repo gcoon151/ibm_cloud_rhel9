@@ -18,6 +18,31 @@
 # =============================================================================
 set -ex
 
+# ---------------------------------------------------------------------------
+# Disable IBM Cloud vendor-data injection (deviation #15)
+#
+# IBM Cloud injects vendor-data into every RHEL VSI via /dev/vdc (NoCloud
+# datasource). For RHEL images this includes rh_subscription, scripts_vendor,
+# and power_state_change modules. On a dm-verity peer pod image the first two
+# either fail or hang, and power_state_change then powers off the VM at ~49s —
+# before kata-agent completes its handshake.
+#
+# We disable both vendor_data and vendor_data2 (the two-part NoCloud variant).
+# IBM Cloud can still inject user-data (INITDATA, cloud config) via /dev/vdc —
+# only the vendor portion is suppressed. Our own cloud-init config in user-data
+# (fstab mounts, hostname, etc.) continues to work normally.
+# ---------------------------------------------------------------------------
+mkdir -p /etc/cloud/cloud.cfg.d
+cat > /etc/cloud/cloud.cfg.d/99-ibm-no-vendor-data.cfg << 'EOF'
+# Disable IBM Cloud vendor-data — prevents rh_subscription / power_state_change
+# from firing on a dm-verity read-only peer pod image.
+# See: rhel10-experimental/UPSTREAM_DEVIATIONS.md deviation #15
+vendor_data:
+  enabled: false
+vendor_data2:
+  enabled: false
+EOF
+
 # CoCo runtime dependencies
 dnf install -y xmlsec1 xmlsec1-openssl
 
