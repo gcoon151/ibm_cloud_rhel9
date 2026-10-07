@@ -16,22 +16,17 @@ IMAGE_PRIVATE_KEY=${3:-}
 [[ -f $QCOW2 ]] || \
     { printf "One or more required files are missing:\n\tQCOW2=$QCOW2\n "; exit 1; }
 
-[[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && echo "Subscription credentials have been found" && SM_SECRET_BUILD_CMD=" --secret=id=activation_key,env=ACTIVATION_KEY --secret=id=org_id,env=ORG_ID "
+[[ -n "${ACTIVATION_KEY}" && -n "${ORG_ID}" ]] && echo "Subscription credentials have been found"
 
-# NOTE: build-rhel10-overlay.sh already built coco-podvm into root's store in Step 3.
-# This second build (inside example_run.sh) is a belt-and-suspenders fallback.
-# sudo-rs resets env; --preserve-env passes the secrets through.
-# Failure here is fatal — if the cached image is also missing we cannot proceed.
-if ! sudo --preserve-env=ACTIVATION_KEY,ORG_ID podman build -t coco-podvm \
-    ${SM_SECRET_BUILD_CMD} \
-    -f Dockerfile .; then
-    # Build failed — only continue if a cached image exists in root's store
-    if ! sudo podman image exists localhost/coco-podvm; then
-        echo "ERROR: podman build failed AND no cached localhost/coco-podvm image found — cannot run overlay" >&2
-        exit 1
-    fi
-    echo "WARNING: podman build failed but cached localhost/coco-podvm exists — using cache"
+# The container is built exactly once in build-rhel10-overlay.sh Step 3.
+# Re-building here is wrong: a failed build would silently fall back to any
+# cached (possibly stale) image, producing an unreproducible overlay (B3).
+# Assert the image exists — if it doesn't, the caller failed to build it.
+if ! sudo podman image exists localhost/coco-podvm; then
+    echo "ERROR: localhost/coco-podvm not found — build-rhel10-overlay.sh Step 3 must build it first" >&2
+    exit 1
 fi
+echo "  Using coco-podvm image from Step 3 build"
 
 if [[ -n "${IMAGE_CERTIFICATE_PEM:-}" && -n "${IMAGE_PRIVATE_KEY:-}" ]]; then
     CERT_OPTIONS="-v $IMAGE_CERTIFICATE_PEM:/public.pem:ro,Z -v $IMAGE_PRIVATE_KEY:/private.key:ro,Z"
@@ -57,9 +52,10 @@ else
     echo "         Run: sudo podman login registry.redhat.io first" >&2
 fi
 
-# Initialize variables that may not be set
+# Initialize variables that may not be set — CERT_OPTIONS must NOT be reset here;
+# it was conditionally set above from IMAGE_CERTIFICATE_PEM/IMAGE_PRIVATE_KEY (B3 fix).
 SM_SECRET_RUN_CMD=""
-CERT_OPTIONS=""
+CERT_OPTIONS="${CERT_OPTIONS:-}"
 run_extras="${run_extras:-}"
 
 # sudo-rs (this Ubuntu build host) resets env by default; use --preserve-env so podman

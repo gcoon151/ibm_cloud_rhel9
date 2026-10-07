@@ -128,6 +128,18 @@ if [[ ! -f /etc/systemd/system/luks-scratch.service ]]; then
 fi
 echo "✓ luks-config extracted, luks-scratch.service present"
 
+# Fix ExecStartPre in kata-agent.service.d/10-override.conf (from luks-config.tar.gz).
+# Upstream uses '[ -b /dev/mapper/scratch ] && mount ...', which exits 1 when the device
+# doesn't exist (local boot / no peer-pod user-data), causing kata-agent to fail.
+# The correct form is 'if [ -b ... ]; then mount ...; fi' which always exits 0.
+KA_OVERRIDE=/etc/systemd/system/kata-agent.service.d/10-override.conf
+if [[ -f "${KA_OVERRIDE}" ]]; then
+    sed -i "s|ExecStartPre=sh -c '\[ -b /dev/mapper/scratch \] && mount /dev/mapper/scratch /kata-containers'|ExecStartPre=sh -c 'if [ -b /dev/mapper/scratch ]; then mount /dev/mapper/scratch /kata-containers; fi'|" "${KA_OVERRIDE}"
+    echo "✓ Fixed kata-agent ExecStartPre (was: && mount, now: if-then-fi)"
+else
+    echo "WARNING: ${KA_OVERRIDE} not found — kata-agent ExecStartPre fix not applied" >&2
+fi
+
 # ---------------------------------------------------------------------------
 # Step 4: SELinux context fixes + firewall
 # ---------------------------------------------------------------------------
@@ -344,7 +356,7 @@ EOF
     mkdir -p /etc/systemd/system/kata-agent.service.d
     cat > /etc/systemd/system/kata-agent.service.d/10-override.conf << 'EOF'
 [Service]
-ExecStartPre=sh -c '[ -b /dev/mapper/scratch ] && mount /dev/mapper/scratch /kata-containers'
+ExecStartPre=sh -c 'if [ -b /dev/mapper/scratch ]; then mount /dev/mapper/scratch /kata-containers; fi'
 Restart=on-failure
 RestartSec=5s
 Environment=RUST_LOG=debug
@@ -423,9 +435,18 @@ AA_DATE=$(epoch_to_date "$AA_MTIME")
 KA_DATE=$(epoch_to_date "$KA_MTIME")
 BUILD_TS=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-# PODVM_BINARY and PODVM_BINARY_DIGEST are injected by the container env (from example_run.sh).
+# PODVM_BINARY is injected at build time by build-rhel10-overlay.sh (B2 fix).
+# virt-customize runs in a clean guest env, so container env vars do not arrive here;
+# the value must have been baked into this script before the virt-customize --run call.
 PAYLOAD_IMAGE="${PODVM_BINARY:-unknown}"
 PAYLOAD_DIGEST="${PODVM_BINARY_DIGEST:-unknown}"
+
+# Hard-fail if still unknown — a manifest recording "unknown" is worse than no manifest.
+if [[ "${PAYLOAD_IMAGE}" == "unknown" ]]; then
+    echo "ERROR: PODVM_BINARY is 'unknown' — build-rhel10-overlay.sh failed to inject it (B2)" >&2
+    echo "       The version manifest would be untrustworthy. Failing the build." >&2
+    exit 1
+fi
 
 cat > /etc/podvm-version.json << MANIFEST
 {
