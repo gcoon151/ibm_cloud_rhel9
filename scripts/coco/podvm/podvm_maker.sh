@@ -141,7 +141,9 @@ KA_OVERRIDE=/etc/systemd/system/kata-agent.service.d/10-override.conf
 if [[ -f "${KA_OVERRIDE}" ]]; then
     echo "✓ kata-agent ExecStartPre left as upstream (scratch device required)"
 else
-    echo "WARNING: ${KA_OVERRIDE} not found — luks-config.tar.gz may not have extracted it" >&2
+    echo "ERROR: ${KA_OVERRIDE} not found — luks-config.tar.gz did not extract it" >&2
+    echo "       Without this file kata-agent will run without encrypted scratch (silent RAM overlay)." >&2
+    exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -439,16 +441,24 @@ AA_DATE=$(epoch_to_date "$AA_MTIME")
 KA_DATE=$(epoch_to_date "$KA_MTIME")
 BUILD_TS=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-# PODVM_BINARY is injected at build time by build-rhel10-overlay.sh (B2 fix).
-# virt-customize runs in a clean guest env, so container env vars do not arrive here;
-# the value must have been baked into this script before the virt-customize --run call.
+# PODVM_BINARY and PODVM_BINARY_DIGEST are injected at build time by build-rhel10-overlay.sh
+# Step 2 (B2 fix) — before the container build — so the real values are baked into the
+# container image and available here inside virt-customize's clean guest env.
 PAYLOAD_IMAGE="${PODVM_BINARY:-unknown}"
 PAYLOAD_DIGEST="${PODVM_BINARY_DIGEST:-unknown}"
 
-# Hard-fail if still unknown — a manifest recording "unknown" is worse than no manifest.
-if [[ "${PAYLOAD_IMAGE}" == "unknown" ]]; then
-    echo "ERROR: PODVM_BINARY is 'unknown' — build-rhel10-overlay.sh failed to inject it (B2)" >&2
+# Hard-fail on any bad value — a manifest recording "unknown" or a placeholder is worse than no manifest.
+if [[ "${PAYLOAD_IMAGE}" == "unknown" || -z "${PAYLOAD_IMAGE}" ]]; then
+    echo "ERROR: PODVM_BINARY is '${PAYLOAD_IMAGE}' — build-rhel10-overlay.sh failed to inject it (B2)" >&2
     echo "       The version manifest would be untrustworthy. Failing the build." >&2
+    exit 1
+fi
+if [[ "${PAYLOAD_DIGEST}" == "unknown" || -z "${PAYLOAD_DIGEST}" || \
+      "${PAYLOAD_DIGEST}" == *"PLACEHOLDER"* || \
+      ! "${PAYLOAD_DIGEST}" =~ ^registry\.redhat\.io.*@sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: PODVM_BINARY_DIGEST is invalid: '${PAYLOAD_DIGEST}'" >&2
+    echo "       Expected format: registry.redhat.io/...@sha256:<64 hex chars>" >&2
+    echo "       build-rhel10-overlay.sh Step 2 must inject a real digest before the container build." >&2
     exit 1
 fi
 

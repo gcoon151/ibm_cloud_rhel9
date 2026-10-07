@@ -77,6 +77,10 @@ if [[ $GPT_SKIP -eq 0 ]]; then
         echo "  SKIP: qemu-nbd connect failed — GPT check cannot run" >&2
         ((FAIL++)) || true
         GPT_SKIP=1
+    else
+        # Let the kernel finish scanning the device before reading the partition table
+        sudo udevadm settle 2>/dev/null || true
+        sleep 1
     fi
 fi
 if [[ $GPT_SKIP -eq 0 ]]; then

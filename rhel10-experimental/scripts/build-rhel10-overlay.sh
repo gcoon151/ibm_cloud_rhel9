@@ -128,27 +128,44 @@ echo "✓ Binary tarballs clean — get-artifacts.sh will download from registry
 
 cp "${REPO_ROOT}/scripts/coco/podvm/podvm_maker.sh"      "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
 
-# B2 fix: inject PODVM_BINARY and PODVM_BINARY_DIGEST into the copied podvm_maker.sh so
-# virt-customize's clean guest env receives them. The container env does not propagate
-# into the guest; values must be baked into the script before virt-customize --run.
-# We resolve PODVM_BINARY_DIGEST here (Step 4 below does the pull, but we need the tag
-# for the sed substitution). The digest is re-resolved after the pull in Step 4.
-# Inject as literal shell variable assignments at the top of the script (after the shebang).
+# B2 fix: inject PODVM_BINARY and PODVM_BINARY_DIGEST into the copied podvm_maker.sh BEFORE
+# the Step 3 container build (ADD scripts /scripts bakes the file at that point).
+# The digest is resolved here so the real value — not a placeholder — is baked into the
+# container image. Step 4 still exports these vars for example_run.sh env consistency,
+# but podvm_maker.sh running inside virt-customize uses only the baked-in values.
 PODVM_BINARY_FOR_INJECT="registry.redhat.io/openshift-sandboxed-containers/osc-podvm-payload-rhel9:${PAYLOAD_TAG}"
-# Use python3 for safe multiline injection (avoids sed delimiter conflicts in URLs)
+echo "  Resolving payload digest for ${PODVM_BINARY_FOR_INJECT} (needed before container build)..."
+sudo --preserve-env=HOME podman login registry.redhat.io \
+    --username "${RH_USERNAME}" --password "${RH_PASSWORD}" 2>/dev/null
+sudo podman pull "${PODVM_BINARY_FOR_INJECT}" 2>/dev/null | tail -1 || true
+PODVM_BINARY_DIGEST_FOR_INJECT=$(sudo podman inspect \
+    --format '{{index .RepoDigests 0}}' "${PODVM_BINARY_FOR_INJECT}" 2>/dev/null || echo "")
+if [[ -z "${PODVM_BINARY_DIGEST_FOR_INJECT}" || \
+      "${PODVM_BINARY_DIGEST_FOR_INJECT}" == "unknown" || \
+      ! "${PODVM_BINARY_DIGEST_FOR_INJECT}" =~ ^registry\.redhat\.io.*@sha256: ]]; then
+    echo "ERROR: Could not resolve a valid digest for ${PODVM_BINARY_FOR_INJECT}" >&2
+    echo "       Got: '${PODVM_BINARY_DIGEST_FOR_INJECT}'" >&2
+    echo "       Check registry login and that PAYLOAD_TAG=${PAYLOAD_TAG} exists." >&2
+    exit 1
+fi
+echo "  ✓ Digest: ${PODVM_BINARY_DIGEST_FOR_INJECT}"
+
+# Use python3 for safe injection (avoids sed delimiter conflicts in URLs/digests)
 python3 - "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/podvm_maker.sh" \
-           "${PODVM_BINARY_FOR_INJECT}" <<'PYEOF'
+           "${PODVM_BINARY_FOR_INJECT}" \
+           "${PODVM_BINARY_DIGEST_FOR_INJECT}" <<'PYEOF'
 import sys, re
 
-script_path = sys.argv[1]
-podvm_binary = sys.argv[2]
+script_path  = sys.argv[1]
+podvm_binary  = sys.argv[2]
+podvm_digest  = sys.argv[3]
 
 with open(script_path) as f:
     content = f.read()
 
 # Remove any existing injected lines (idempotent re-runs)
 content = re.sub(r'^# B2-injected.*\n', '', content, flags=re.MULTILINE)
-content = re.sub(r'^PODVM_BINARY=.*\n', '', content, flags=re.MULTILINE)
+content = re.sub(r'^PODVM_BINARY=.*\n',        '', content, flags=re.MULTILINE)
 content = re.sub(r'^PODVM_BINARY_DIGEST=.*\n', '', content, flags=re.MULTILINE)
 
 # Insert after the shebang line
@@ -156,7 +173,7 @@ shebang_end = content.index('\n') + 1
 inject = (
     f"# B2-injected by build-rhel10-overlay.sh Step 2 — do not edit manually\n"
     f"PODVM_BINARY={podvm_binary!r}\n"
-    f"PODVM_BINARY_DIGEST=__DIGEST_PLACEHOLDER__\n"
+    f"PODVM_BINARY_DIGEST={podvm_digest!r}\n"
 )
 content = content[:shebang_end] + inject + content[shebang_end:]
 
@@ -164,15 +181,15 @@ with open(script_path, 'w') as f:
     f.write(content)
 PYEOF
 
-echo "✓ PODVM_BINARY injected into podvm_maker.sh copy (digest placeholder — will be replaced in Step 4)"
-
-# Verify injection landed
-if ! grep -q "PODVM_BINARY=${PODVM_BINARY_FOR_INJECT@Q}" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/podvm_maker.sh" 2>/dev/null; then
+# Post-check: verify injection landed in the file that will be baked into the container
+# (the container image is what actually runs virt-customize — not a host-side copy).
+if ! grep -q "PODVM_BINARY_DIGEST='${PODVM_BINARY_DIGEST_FOR_INJECT}'" \
+        "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/podvm_maker.sh" 2>/dev/null; then
     grep -n 'PODVM_BINARY' "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/podvm_maker.sh" | head -5
-    echo "ERROR: PODVM_BINARY injection into podvm_maker.sh failed" >&2
+    echo "ERROR: PODVM_BINARY_DIGEST injection into podvm_maker.sh failed" >&2
     exit 1
 fi
-echo "✓ Verified: PODVM_BINARY present in copied podvm_maker.sh"
+echo "✓ Verified: PODVM_BINARY + PODVM_BINARY_DIGEST baked into podvm_maker.sh (will be in container image)"
 
 cp "${REPO_ROOT}/scripts/coco/podvm/script-disk-mods.sh" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
 # virt-customize --run gives scripts a clean env — bake DEBUG_BUILD value directly into the script
@@ -263,26 +280,10 @@ export DEBUG_BUILD="${DEBUG_BUILD:-}"
 # ACTIVATION_KEY must be exported for create-verity-podvm.sh's inner build.
 export ACTIVATION_KEY ORG_ID
 
-# Resolve payload digest via root's podman (matches which store sudo podman run will use).
-echo "  Resolving payload digest for ${PODVM_BINARY}..."
-sudo podman pull "${PODVM_BINARY}" 2>/dev/null | tail -1 || true
-export PODVM_BINARY_DIGEST=$(sudo podman inspect --format '{{index .RepoDigests 0}}' "${PODVM_BINARY}" 2>/dev/null || echo "unknown")
-echo "  PODVM_BINARY_DIGEST: ${PODVM_BINARY_DIGEST}"
-
-# B2 fix: now that we have the real digest, replace the placeholder baked in Step 2
-if [[ "${PODVM_BINARY_DIGEST}" == "unknown" ]]; then
-    echo "ERROR: Could not resolve digest for ${PODVM_BINARY} — cannot inject into podvm_maker.sh" >&2
-    exit 1
-fi
-sed -i "s|PODVM_BINARY_DIGEST=__DIGEST_PLACEHOLDER__|PODVM_BINARY_DIGEST='${PODVM_BINARY_DIGEST}'|" \
-    "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/podvm_maker.sh"
-echo "  ✓ PODVM_BINARY_DIGEST injected into podvm_maker.sh copy: ${PODVM_BINARY_DIGEST}"
-
-# Verify the digest was actually substituted (no placeholder remaining)
-if grep -q '__DIGEST_PLACEHOLDER__' "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/podvm_maker.sh"; then
-    echo "ERROR: digest placeholder still present after sed — injection failed" >&2
-    exit 1
-fi
+# Digest was already resolved and baked into podvm_maker.sh in Step 2 (before the container
+# build). Export here for example_run.sh env consistency only — the container uses the baked value.
+export PODVM_BINARY_DIGEST="${PODVM_BINARY_DIGEST_FOR_INJECT}"
+echo "  PODVM_BINARY_DIGEST (already baked in Step 2): ${PODVM_BINARY_DIGEST}"
 
 cd "${COCO_SCRIPTS_DIR}"
 bash example_run.sh "${OUTPUT_QCOW2}"
