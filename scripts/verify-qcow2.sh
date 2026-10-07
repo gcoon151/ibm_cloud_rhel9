@@ -58,18 +58,19 @@ echo "================================================================="
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- [1] GPT integrity ---"
-RAW=$(mktemp /tmp/verify-XXXXXX.raw)
-trap "rm -f '$RAW'" EXIT
-qemu-img convert -f qcow2 -O raw "$QCOW2" "$RAW" 2>/dev/null
-if sgdisk -v "$RAW" 2>&1 | grep -q "No problems found"; then
+# Use qemu-nbd so we avoid writing a full raw copy of the QCOW2 to /tmp.
+NBD_DEV=/dev/nbd0
+modprobe nbd max_part=8 2>/dev/null || true
+qemu-nbd --connect="$NBD_DEV" --read-only "$QCOW2"
+sleep 1
+if sgdisk -v "$NBD_DEV" 2>&1 | grep -q "No problems found"; then
     ok "GPT backup header at end of disk"
 else
-    PROBLEMS=$(sgdisk -v "$RAW" 2>&1 | grep -v "^$" | head -5)
+    PROBLEMS=$(sgdisk -v "$NBD_DEV" 2>&1 | grep -v "^$" | head -5)
     fail "GPT corrupt: $PROBLEMS"
     echo "    Fix: sgdisk -e $QCOW2"
 fi
-rm -f "$RAW"
-trap - EXIT
+qemu-nbd --disconnect "$NBD_DEV" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 2. Partition GUIDs
