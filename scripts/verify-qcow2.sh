@@ -211,6 +211,17 @@ for BIN in kata-agent agent-protocol-forwarder; do
     fi
 done
 
+# Post-check: assert create-scratch.sh in the image is our patched version.
+# The upstream version has no error handling and exits 0 on failure.
+# This check confirms the luks-scratch tarball was built from the patched source.
+SCRATCH_PATCHED=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- \
+    cat /usr/local/sbin/create-scratch.sh 2>/dev/null | grep -c 'set -euo pipefail' || true)
+if [[ "${SCRATCH_PATCHED}" -ge 1 ]]; then
+    ok "create-scratch.sh is patched (set -euo pipefail present)"
+else
+    fail "create-scratch.sh is NOT patched — upstream version in image; scratch failures will be hidden"
+fi
+
 # ---------------------------------------------------------------------------
 # 5b. SSH daemon check — warn if sshd is absent/masked (debug images need it)
 # ---------------------------------------------------------------------------

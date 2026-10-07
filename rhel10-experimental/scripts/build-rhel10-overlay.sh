@@ -211,9 +211,14 @@ cp "${PATCHES_DIR}/coco-components.sh"      "${COCO_SCRIPTS_DIR}/scripts/coco/co
 # B1 fix: replace upstream create-verity-podvm.sh (EXIT trap always exits 0) with
 # our patched version that preserves $? so the container exits non-zero on failure.
 cp "${PATCHES_DIR}/create-verity-podvm.sh"  "${COCO_SCRIPTS_DIR}/scripts/create-verity-podvm.sh"
-# Fix 2: replace upstream create-scratch.sh (no error handling, world-readable key) with
-# our patched version: set -e, umask 077, assert repart created scratch, assert /dev/mapper/scratch.
-cp "${PATCHES_DIR}/create-scratch.sh"       "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/create-scratch.sh"
+# Fix 2: replace upstream create-scratch.sh with our patched version.
+# The script lives in the luks-scratch tarball tree — copy to the path that
+# coco-components.sh:82 packages via build.sh:
+#   scripts/coco/podvm/luks-scratch/usr/local/sbin/create-scratch.sh
+# Copying to scripts/coco/podvm/create-scratch.sh has no effect.
+cp "${PATCHES_DIR}/create-scratch.sh" \
+   "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/luks-scratch/usr/local/sbin/create-scratch.sh"
+chmod 0755 "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/luks-scratch/usr/local/sbin/create-scratch.sh"
 echo "✓ IBM overlay scripts copied (including upstream patches)"
 
 # ---------------------------------------------------------------------------
@@ -342,10 +347,24 @@ bash "${VERIFY_SCRIPT}" "${OUTPUT_QCOW2}"
 echo ""
 echo "--- Step 5b: Verifying CDH binary identity in QCOW2 ---"
 
+# Locate root partition by GUID — do not hardcode /dev/sda3: with the 2-partition
+# base (sda1=EFI, sda2=root) the overlay adds verity as sda3, making root=sda2.
+CDH_ROOT_PART=""
+for _n in 1 2 3 4; do
+    _t=$(guestfish --ro -a "${OUTPUT_QCOW2}" -- run : part-get-gpt-type /dev/sda ${_n} 2>/dev/null \
+         | tr -d '\n' | tr '[:lower:]' '[:upper:]' || true)
+    [[ "${_t}" == "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709" ]] && { CDH_ROOT_PART="/dev/sda${_n}"; break; }
+done
+if [[ -z "${CDH_ROOT_PART}" ]]; then
+    echo "ERROR: Step 5b: could not find root partition by GUID 4F68BCE3 in ${OUTPUT_QCOW2}" >&2
+    exit 1
+fi
+echo "  Root partition for CDH checks: ${CDH_ROOT_PART}"
+
 # Extract CDH binary from QCOW2 for inspection
 CDH_TMPDIR=$(mktemp -d "${OUTPUT_DIR}/cdh-check-XXXXXX")
 guestfish --ro -a "${OUTPUT_QCOW2}" -- \
-    run : mount /dev/sda3 / : download /usr/local/bin/confidential-data-hub "${CDH_TMPDIR}/confidential-data-hub"
+    run : mount "${CDH_ROOT_PART}" / : download /usr/local/bin/confidential-data-hub "${CDH_TMPDIR}/confidential-data-hub"
 CDH_BIN="${CDH_TMPDIR}/confidential-data-hub"
 
 if [[ ! -f "${CDH_BIN}" ]]; then
@@ -354,7 +373,7 @@ if [[ ! -f "${CDH_BIN}" ]]; then
 fi
 
 # Check 1: mtime via guestfish stat (April 3 stale = epoch ~1743703200)
-CDH_MTIME=$(guestfish --ro -a "${OUTPUT_QCOW2}" -- run : mount /dev/sda3 / : \
+CDH_MTIME=$(guestfish --ro -a "${OUTPUT_QCOW2}" -- run : mount "${CDH_ROOT_PART}" / : \
     stat /usr/local/bin/confidential-data-hub 2>/dev/null | awk '/^mtime:/{print $2}')
 CDH_DATE=$(python3 -c "import datetime; print(datetime.datetime.utcfromtimestamp(${CDH_MTIME:-0}).strftime('%Y-%m-%d'))")
 echo "  mtime:  ${CDH_DATE} (epoch ${CDH_MTIME})"
