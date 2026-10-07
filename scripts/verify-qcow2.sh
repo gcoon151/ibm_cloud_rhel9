@@ -54,18 +54,43 @@ echo "QCOW2 verification: $QCOW2"
 echo "================================================================="
 
 # ---------------------------------------------------------------------------
-# 1. GPT integrity — partition table readable
+# 1. GPT integrity — backup header must be at end of disk
 # ---------------------------------------------------------------------------
-# qemu-nbd requires /dev/nbd0 which needs either root or a loaded nbd module
-# with appropriate permissions — this fails on the build host with Permission
-# denied. Converting to a full raw file fills /tmp with a 7GB file and hangs.
-# Both approaches have been tried and failed (see LESSONS_LEARNED_2026-10-07
-# Lesson 40). The GUID checks in section 2 below already prove the partition
-# table is readable via guestfish — a redundant GPT check here adds no value.
-# Skip this check; the partition GUID checks are the authoritative gate.
+# GPT backup header corruption is a real recurring bug (deviation #9: sgdisk -e
+# needed twice). This check has caught real defects. Run with sudo so nbd is
+# available. If nbd is genuinely unavailable, print SKIP and count as FAIL —
+# a skipped check must never count as passed.
 echo ""
 echo "--- [1] GPT integrity ---"
-ok "GPT check skipped — partition GUID checks (section 2) are the authoritative gate"
+GPT_NBD=/dev/nbd0
+GPT_SKIP=0
+if ! sudo modprobe nbd max_part=8 2>/dev/null; then
+    echo "  SKIP: could not load nbd module — GPT check cannot run" >&2
+    ((FAIL++)) || true
+    GPT_SKIP=1
+fi
+if [[ $GPT_SKIP -eq 0 ]]; then
+    # Trap to ensure nbd is always disconnected
+    _nbd_cleanup() { sudo qemu-nbd --disconnect "$GPT_NBD" 2>/dev/null || true; }
+    trap '_nbd_cleanup' EXIT
+    if ! sudo qemu-nbd --read-only --connect="$GPT_NBD" "$QCOW2" 2>/dev/null; then
+        echo "  SKIP: qemu-nbd connect failed — GPT check cannot run" >&2
+        ((FAIL++)) || true
+        GPT_SKIP=1
+    fi
+fi
+if [[ $GPT_SKIP -eq 0 ]]; then
+    GPT_OUT=$(sudo sgdisk -v "$GPT_NBD" 2>&1 || true)
+    _nbd_cleanup
+    trap - EXIT
+    if echo "$GPT_OUT" | grep -q "No problems found"; then
+        ok "GPT integrity verified (sgdisk -v: No problems found)"
+    else
+        fail "GPT check failed: $GPT_OUT"
+    fi
+else
+    trap - EXIT 2>/dev/null || true
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Partition GUIDs
@@ -75,7 +100,10 @@ echo "--- [2] Partition GUIDs ---"
 
 EFI_GUID="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 ROOT_GUID="4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709"
-VERITY_GUID="D13C5D3B-B5D1-422A-B29F-9454FDC89D76"
+# V3 fix: x86-64 root verity GUID (not 32-bit x86 D13C5D3B...).
+# Verified from RHEL 10 image: 2C7357ED-EBD2-46D9-AEC1-23D437EC2BF5
+VERITY_GUID="2C7357ED-EBD2-46D9-AEC1-23D437EC2BF5"
+VERITY_FOUND=0
 
 PART_COUNT=$(guestfish --ro -a "$QCOW2" -- run : part-list /dev/sda 2>/dev/null | grep -c 'part_num' || true)
 ok "Partition count: $PART_COUNT"
@@ -87,9 +115,14 @@ for PNUM in 1 2 3 4; do
     case "${GUID^^}" in
         "$EFI_GUID")    ok "  Part $PNUM is EFI System Partition" ;;
         "$ROOT_GUID")   ok "  Part $PNUM is Linux x86-64 root (required for dm-verity)" ;;
-        "$VERITY_GUID") ok "  Part $PNUM is Linux root verity — dm-verity hash partition present" ;;
+        "$VERITY_GUID") ok "  Part $PNUM is Linux x86-64 root verity — dm-verity hash partition present"; VERITY_FOUND=1 ;;
     esac
 done
+
+# V3 fix: verity partition is REQUIRED — fail if absent
+if [[ $VERITY_FOUND -eq 0 ]]; then
+    fail "No x86-64 root verity partition (GUID $VERITY_GUID) found — dm-verity was not applied"
+fi
 
 # Check root GUID exists
 if ! guestfish --ro -a "$QCOW2" -- run : part-list /dev/sda 2>/dev/null | grep -q "part_num"; then
@@ -99,21 +132,18 @@ fi
 # ---------------------------------------------------------------------------
 # 3. UKI in EFI partition
 # ---------------------------------------------------------------------------
+# V2 fix: mount EFI partition at / inside guestfish (no /boot/efi mountpoint
+# on the EFI partition itself). Previously used -m /dev/sda1:/boot/efi which
+# gave "mount point is not a directory" (hidden by 2>/dev/null) and falsely
+# reported UKI/addon missing when they were present (seen in C-15 verify).
 echo ""
 echo "--- [3] UKI in EFI partition ---"
-# Find the EFI partition (512MB, GUID C12A7328...)
-EFI_DEV=$(guestfish --ro -a "$QCOW2" -- run : list-partitions 2>/dev/null | \
-    while read dev; do
-        guid=$(guestfish --ro -a "$QCOW2" -- run : part-get-gpt-type /dev/sda \
-            "${dev##*[a-z]}" 2>/dev/null | tr '[:lower:]' '[:upper:]' || true)
-        [[ "${guid}" == "${EFI_GUID}" ]] && echo "$dev" && break
-    done || true)
-
-UKI_FILES=$(guestfish --ro -a "$QCOW2" -m /dev/sda1:/boot/efi -- ls /boot/efi/EFI/Linux/ 2>/dev/null || true)
+UKI_FILES=$(guestfish --ro -a "$QCOW2" -- \
+    run : mount /dev/sda1 / : find /EFI/Linux 2>/dev/null | grep '\.efi$' || true)
 if [[ -n "$UKI_FILES" ]]; then
-    ok "UKI present in /boot/efi/EFI/Linux/: $UKI_FILES"
+    ok "UKI present in EFI/Linux: $(echo "$UKI_FILES" | tr '\n' ' ')"
 else
-    fail "No .efi files in /boot/efi/EFI/Linux/ — UKI not installed"
+    fail "No .efi files in EFI/Linux — UKI not installed"
 fi
 
 # ---------------------------------------------------------------------------
@@ -121,7 +151,9 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- [4] Verity addon ---"
-ADDON=$(guestfish --ro -a "$QCOW2" -m /dev/sda1:/boot/efi -- find /boot/efi/EFI/Linux/ 2>/dev/null | grep 'verity.addon.efi' || true)
+# V2 fix: same mount fix as section 3
+ADDON=$(guestfish --ro -a "$QCOW2" -- \
+    run : mount /dev/sda1 / : find /EFI/Linux 2>/dev/null | grep 'verity\.addon\.efi' || true)
 if [[ -n "$ADDON" ]]; then
     ok "Verity addon present: $ADDON"
 else

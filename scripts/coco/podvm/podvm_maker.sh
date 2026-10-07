@@ -128,16 +128,20 @@ if [[ ! -f /etc/systemd/system/luks-scratch.service ]]; then
 fi
 echo "✓ luks-config extracted, luks-scratch.service present"
 
-# Fix ExecStartPre in kata-agent.service.d/10-override.conf (from luks-config.tar.gz).
-# Upstream uses '[ -b /dev/mapper/scratch ] && mount ...', which exits 1 when the device
-# doesn't exist (local boot / no peer-pod user-data), causing kata-agent to fail.
-# The correct form is 'if [ -b ... ]; then mount ...; fi' which always exits 0.
+# kata-agent.service.d/10-override.conf is extracted from luks-config.tar.gz.
+# Upstream uses '[ -b /dev/mapper/scratch ] && mount ...' which exits 1 (and fails
+# kata-agent) when scratch is absent. On IBM Cloud the large boot volume always has
+# a scratch partition, so the upstream form works. The RHEL 9 production images use
+# the same upstream drop-in and pass all 15 tests.
+# Do NOT weaken this to 'if ... fi' — that lets kata-agent run without encrypted scratch,
+# silently landing container layers in the RAM overlay with no error.
+# The local boot test must use a larger overlay (qemu-img create -F qcow2 -b image 30G)
+# so systemd-repart can create the scratch partition — see HANDOFF.md Step 5.
 KA_OVERRIDE=/etc/systemd/system/kata-agent.service.d/10-override.conf
 if [[ -f "${KA_OVERRIDE}" ]]; then
-    sed -i "s|ExecStartPre=sh -c '\[ -b /dev/mapper/scratch \] && mount /dev/mapper/scratch /kata-containers'|ExecStartPre=sh -c 'if [ -b /dev/mapper/scratch ]; then mount /dev/mapper/scratch /kata-containers; fi'|" "${KA_OVERRIDE}"
-    echo "✓ Fixed kata-agent ExecStartPre (was: && mount, now: if-then-fi)"
+    echo "✓ kata-agent ExecStartPre left as upstream (scratch device required)"
 else
-    echo "WARNING: ${KA_OVERRIDE} not found — kata-agent ExecStartPre fix not applied" >&2
+    echo "WARNING: ${KA_OVERRIDE} not found — luks-config.tar.gz may not have extracted it" >&2
 fi
 
 # ---------------------------------------------------------------------------
@@ -356,7 +360,7 @@ EOF
     mkdir -p /etc/systemd/system/kata-agent.service.d
     cat > /etc/systemd/system/kata-agent.service.d/10-override.conf << 'EOF'
 [Service]
-ExecStartPre=sh -c 'if [ -b /dev/mapper/scratch ]; then mount /dev/mapper/scratch /kata-containers; fi'
+ExecStartPre=sh -c '[ -b /dev/mapper/scratch ] && mount /dev/mapper/scratch /kata-containers'
 Restart=on-failure
 RestartSec=5s
 Environment=RUST_LOG=debug
