@@ -131,9 +131,20 @@ echo "✓ luks-config extracted, luks-scratch.service present"
 # ---------------------------------------------------------------------------
 # Step 4: SELinux context fixes + firewall
 # ---------------------------------------------------------------------------
-# Each binary that needs a non-default SELinux label goes through apply_selinux_label(),
-# which runs semanage, restorecon, then reads the label back off the file to verify it
-# actually took. All three steps must succeed or the build fails immediately.
+# apply_selinux_label writes the fcontext rule (semanage) and runs restorecon.
+#
+# IMPORTANT — why there is no in-guest label verification here:
+# Inside virt-customize, restorecon writes the rule to file_contexts.local but
+# virt-customize's own SELinux relabelling pass (which runs at the very end,
+# after all --run scripts complete) is what actually applies labels to inodes.
+# Calling ls -Z immediately after restorecon will show the old label because
+# the relabelling hasn't happened yet. Evidence: C-14 builder.log shows
+# restorecon -v on kata-agent printed no "Relabeled" line, yet the final image
+# had bin_t. In-guest verification would produce a false failure.
+#
+# Real verification happens on the HOST after the container finishes, in
+# build-rhel10-overlay.sh Step 5c, using guestfish getxattr to read the
+# security.selinux xattr directly from the QCOW2.
 #
 # On RHEL 10, /usr/sbin is a symlink to /usr/bin (filesystem unification).
 # SELinux equivalency rules reject semanage fcontext on /usr/sbin/ip with:
@@ -159,23 +170,15 @@ apply_selinux_label() {
         return 1
     fi
 
+    # restorecon writes to file_contexts.local so virt-customize's end-of-run
+    # relabelling pass picks it up. The label is not visible via ls -Z yet —
+    # see comment above. Failure here is still a hard stop.
     if ! restorecon -v "${restorecon_path}"; then
         echo "ERROR: restorecon failed for ${restorecon_path}" >&2
         return 1
     fi
 
-    # Verify the label actually took — read type component from ls -Z output.
-    local actual_type
-    actual_type=$(ls -Z "${restorecon_path}" 2>/dev/null | awk '{print $1}' | cut -d: -f3)
-    if [[ "${actual_type}" != "${expected_type}" ]]; then
-        echo "ERROR: SELinux label verification failed for ${restorecon_path}" >&2
-        echo "       Expected type: ${expected_type}" >&2
-        echo "       Actual type:   ${actual_type:-<empty>}" >&2
-        echo "       Full context:  $(ls -Z ${restorecon_path} 2>/dev/null | awk '{print $1}')" >&2
-        return 1
-    fi
-
-    echo "  ✓ ${restorecon_path}: ${expected_type} confirmed"
+    echo "  ✓ ${restorecon_path}: fcontext rule set, restorecon queued"
 }
 
 echo ""
@@ -197,7 +200,7 @@ if ! firewall-offline-cmd --zone=public --add-port=15150/tcp; then
     exit 1
 fi
 
-echo "✓ SELinux contexts set and verified, port 15150 opened in firewall"
+echo "✓ SELinux fcontext rules set, restorecon queued, port 15150 opened in firewall"
 
 # ---------------------------------------------------------------------------
 # Step 5: System configuration (services, systemd units)

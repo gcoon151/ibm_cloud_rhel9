@@ -327,6 +327,47 @@ echo "        (Wire RCAR protocol version is 0.4.0 for 1.13.1 — verified from 
 rm -rf "${CDH_TMPDIR}"
 echo "✓ CDH binary identity verified (mtime + sha256)"
 
+# ---------------------------------------------------------------------------
+# STEP 5c: Verify SELinux labels on critical binaries via guestfish getxattr
+#
+# Inside virt-customize, restorecon queues the rule but does not immediately
+# apply it to the inode — virt-customize's own relabelling pass does that at
+# the very end. An in-guest ls -Z check during the build would see the old
+# label. This host-side check reads the security.selinux xattr directly from
+# the finished QCOW2, after all relabelling is complete.
+#
+# guestfish getxattr returns the raw xattr bytes as a hex dump; we check
+# that the string "bin_t" appears in the decoded output.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Step 5c: SELinux label verification in QCOW2 ---"
+
+verify_selinux_label() {
+    local qcow2="$1"
+    local guest_path="$2"
+    local expected_type="$3"
+
+    local raw
+    raw=$(guestfish --ro -a "${qcow2}" -i getxattr "${guest_path}" security.selinux 2>/dev/null || true)
+    if [[ -z "${raw}" ]]; then
+        echo "ERROR: could not read security.selinux xattr for ${guest_path}" >&2
+        echo "       guestfish getxattr returned empty — file missing or xattr not set" >&2
+        return 1
+    fi
+    # guestfish prints xattr bytes as printable chars; context is e.g. "system_u:object_r:bin_t:s0"
+    if ! echo "${raw}" | grep -q "${expected_type}"; then
+        echo "ERROR: SELinux label wrong for ${guest_path}" >&2
+        echo "       Expected type: ${expected_type}" >&2
+        echo "       Actual xattr:  ${raw}" >&2
+        return 1
+    fi
+    echo "  ✓ ${guest_path}: ${expected_type} confirmed (xattr: $(echo ${raw} | tr -d '\0'))"
+}
+
+verify_selinux_label "${OUTPUT_QCOW2}" /usr/sbin/ip              bin_t
+verify_selinux_label "${OUTPUT_QCOW2}" /usr/local/bin/kata-agent bin_t
+echo "✓ SELinux labels verified in QCOW2"
+
 echo ""
 echo "✓ All verification checks passed. Ready to upload."
 echo ""
