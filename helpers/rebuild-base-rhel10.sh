@@ -113,14 +113,14 @@ virt-install \
     --nographics \
     --noautoconsole \
     --extra-args "console=ttyS0 inst.ks=file:/rhel10-dm-root.ks" \
-    --transient 2>&1 | tee /tmp/rhel10-virt-install.log
+    --transient 2>&1 | tee "${IMAGE_DIR}/rhel10-virt-install-${DATE}.log"
 
 echo ""
 echo "--- Step 1: Waiting for install to finish ---"
 
 # Capture serial console output to a log file for post-mortem diagnosis.
 # The PTY appears a few seconds after domain start.
-CONSOLE_LOG="/tmp/rhel10-anaconda-console-${DATE}.log"
+CONSOLE_LOG="${IMAGE_DIR}/rhel10-anaconda-console-${DATE}.log"
 (
     sleep 3
     PTY=$(sudo virsh --connect qemu:///system qemu-monitor-command "${VM_NAME}" \
@@ -185,9 +185,9 @@ echo ""
 echo "--- Step 3: Partition GUID check ---"
 
 # sfdisk -d on a raw image outputs full device paths, e.g.:
-#   /tmp/foo.raw1 : ... type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B ...
+#   /var/lib/libvirt/images/rhel10/rhel10-chk-XXXXXX.raw1 : ...
 # Match on 'raw1'/'raw2' (suffix of the temp filename) not 'part1'/'part2'.
-RAW_TMP=$(sudo mktemp /tmp/rhel10-chk-XXXXXX.raw)
+RAW_TMP=$(sudo mktemp "${IMAGE_DIR}/rhel10-chk-XXXXXX.raw")
 sudo qemu-img convert -f qcow2 -O raw "${OUTPUT_IMAGE}" "${RAW_TMP}"
 SFDISK_OUT=$(sudo sfdisk -d "${RAW_TMP}" 2>/dev/null)
 sudo rm -f "${RAW_TMP}"

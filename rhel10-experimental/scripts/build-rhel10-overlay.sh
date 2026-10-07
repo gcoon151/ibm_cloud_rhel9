@@ -87,7 +87,7 @@ done
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Step 1: Verifying partition GUIDs ---"
-RAW_TMP=$(mktemp /tmp/rhel10-check-XXXXXX.raw)
+RAW_TMP=$(mktemp "${OUTPUT_DIR}/rhel10-check-XXXXXX.raw")
 qemu-img convert -f qcow2 -O raw "${BASE_QCOW2}" "${RAW_TMP}"
 ROOT_GUID=$(sfdisk -d "${RAW_TMP}" 2>/dev/null | grep -i "type=4F68BCE3" || true)
 EFI_GUID=$(sfdisk  -d "${RAW_TMP}" 2>/dev/null | grep -i "type=C12A7328" || true)
@@ -269,7 +269,7 @@ echo ""
 echo "--- Step 5b: Verifying CDH binary identity in QCOW2 ---"
 
 # Extract CDH binary from QCOW2 for inspection
-CDH_TMPDIR=$(mktemp -d /tmp/cdh-check-XXXXXX)
+CDH_TMPDIR=$(mktemp -d "${OUTPUT_DIR}/cdh-check-XXXXXX")
 guestfish --ro -a "${OUTPUT_QCOW2}" -- \
     run : mount /dev/sda3 / : download /usr/local/bin/confidential-data-hub "${CDH_TMPDIR}/confidential-data-hub"
 CDH_BIN="${CDH_TMPDIR}/confidential-data-hub"
