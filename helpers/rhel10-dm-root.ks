@@ -2,8 +2,9 @@
 #
 # Upstream reference: coco-podvm-scripts/helpers/rhel10-dm-root.ks
 # Deviations from upstream and rationale: rhel10-experimental/UPSTREAM_DEVIATIONS.md
-#   Key deviations: %pre partition pre-creation (#3), no WALinuxAgent (#4), no kdump (#5),
-#                   rhsm-rw partition (#14)
+#   Key deviations: %pre partition pre-creation (#3), no WALinuxAgent (#4), no kdump (#5)
+#   Deviation #14 (rhsm-rw partition) REMOVED: vendor-data is disabled by deviation #15
+#   so nothing writes RHSM state at boot. /var/lib/rhsm is now a tmpfs like /etc/rhsm.
 #
 # Produces a UKI-boot, dm-verity-ready base image.
 # The EFI partition is fully set up by this kickstart — kernel-install fires
@@ -72,35 +73,16 @@ poweroff
 # stall (52KB written in 30 min). Reverted to upstream pattern for B-2.
 # See rhel10-experimental/BUILD_BASELINE.md Run B-1 for details.
 #
-# Partition 3 — rhsm-rw (128 MiB, plain ext4, deviation #14):
-#   IBM Cloud injects vendor-data that runs cloud-init's rh_subscription module,
-#   which calls subscription-manager. subscription-manager writes runtime state
-#   to /var/lib/rhsm/ (entitlements, certs, facts, cache — ~2-5 MB in practice).
-#   The root partition is dm-verity protected and read-only after boot, so these
-#   writes fail → rh_subscription reports failure → power_state_change powers off
-#   the VM at ~35s, before kata-agent completes its handshake.
-#
-#   Fix: a small plain ext4 partition labelled "rhsm-rw", mounted at /var/lib/rhsm
-#   via fstab (available before cloud-init's first stage). /etc/rhsm and
-#   /var/log/rhsm are covered by tmpfs entries in fstab (config is small and
-#   re-created each boot from IBM Cloud vendor-data; logs are ephemeral).
-#
-#   systemd-repart (luks-scratch) runs later and claims the remaining free space
-#   after this partition — the label "rhsm-rw" prevents repart from touching it.
-#
-#   128 MiB is generous; registered RHEL systems typically use <10 MiB here.
-#   This partition is NOT covered by dm-verity (verity covers the root partition
-#   only). It intentionally has no verity protection because it must be writable.
+# Partition layout: two partitions only — EFI + root (--grow).
+# No rhsm-rw partition: deviation #14 removed because deviation #15 disables
+# vendor-data entirely, so rh_subscription never runs. The linux-generic rhsm-rw
+# partition blocked systemd-repart from creating the encrypted scratch disk because
+# repart matches by type (0FC63DAF) and found rhsm-rw instead of creating scratch.
+# All RHSM paths are tmpfs (see fstab entries below). Layout: sda1=EFI, sda2=root.
 ignoredisk --only-use=sda
 clearpart --none --initlabel
-part /boot/efi     --fstype="efi"  --ondisk=sda --size=512 --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
-part /             --fstype="ext4" --ondisk=sda --grow --maxsize=0
-part /var/lib/rhsm --fstype="ext4" --ondisk=sda --size=128 --label=rhsm-rw
-# NOTE: --grow must come before the fixed-size partition so Anaconda assigns
-# sda1=EFI, sda2=root(grow), sda3=rhsm-rw(128MB) in that order.
-# The --label here sets the ext4 filesystem label (e2label), not the GPT
-# partition name. The %post sfdisk call below fixes sda2's GUID; sda3 keeps
-# the default linux-generic GUID which is correct for a data partition.
+part /boot/efi --fstype="efi"  --ondisk=sda --size=512 --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
+part /         --fstype="ext4" --ondisk=sda --grow --maxsize=0
 
 %packages
 @^minimal-environment
@@ -142,42 +124,27 @@ kernel-modules-extra
 %end
 
 %post --erroronfail
-# Fix partition GUIDs and names.
-#
-# Anaconda always allocates fixed-size partitions before --grow partitions,
-# regardless of declaration order in the kickstart. With our three partitions:
-#   sda1 = EFI       (512 MiB, fixed)
-#   sda2 = rhsm-rw   (128 MiB, fixed)   ← Anaconda puts fixed-size first
-#   sda3 = root      (rest of disk, --grow)
-#
+# Fix partition GUIDs.
+# Two-partition layout: sda1=EFI, sda2=root.
 # GUIDs:
 #   sda1 EFI System:        C12A7328-F81F-11D2-BA4B-00A0C93EC93B
-#   sda3 Linux x86-64 root: 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
-#   sda2 rhsm-rw:           0FC63DAF-8483-4772-8E79-3D69D8477DE4 (linux-generic default, no change)
+#   sda2 Linux x86-64 root: 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 
 sfdisk --part-type /dev/sda 1 C12A7328-F81F-11D2-BA4B-00A0C93EC93B
-sfdisk --part-type /dev/sda 3 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
-# Set GPT partition name on sda2 (rhsm-rw) so rebuild-base-rhel10.sh can identify it.
-# (--label in kickstart sets the ext4 filesystem label only, not the GPT partition name.)
-sfdisk --part-label /dev/sda 2 rhsm-rw
+sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 
-# Add fstab entries for RHSM writable paths (deviation #14).
-# /var/lib/rhsm is on the rhsm-rw partition (already in fstab via Anaconda).
-# /etc/rhsm and /var/log/rhsm are tmpfs — small, ephemeral, re-created each boot.
-# Both are available before cloud-init's network stage (systemd mounts them from
-# fstab during early boot, before any cloud-init unit starts).
+# RHSM writable paths — all tmpfs (deviation #14 removed; #15 disables vendor-data).
+# Peer-pod VMs are ephemeral; RHSM state does not persist across pods.
 cat >> /etc/fstab << 'EOF'
 
-# RHSM writable paths — deviation #14 (see rhel10-experimental/UPSTREAM_DEVIATIONS.md)
-# /var/lib/rhsm is already mounted via the rhsm-rw partition entry above.
-# /etc/rhsm: tmpfs so subscription-manager can write config on first boot.
+# RHSM writable paths — all tmpfs (vendor-data disabled, no subscription-manager at boot)
+tmpfs /var/lib/rhsm tmpfs defaults,size=32m,mode=0755 0 0
 tmpfs /etc/rhsm     tmpfs defaults,size=32m,mode=0755 0 0
-# /var/log/rhsm: tmpfs for logs — ephemeral, not needed across reboots.
 tmpfs /var/log/rhsm tmpfs defaults,size=16m,mode=0755 0 0
 EOF
 
-# Create the mountpoint directories (they may not exist in the minimal install).
-mkdir -p /etc/rhsm /var/log/rhsm
+# Create the mountpoint directories.
+mkdir -p /var/lib/rhsm /etc/rhsm /var/log/rhsm
 
 # Speed up kernel-install by disabling grub and dracut hooks (UKI replaces them).
 touch /etc/kernel/install.d/20-grub.install

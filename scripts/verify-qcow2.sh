@@ -128,6 +128,21 @@ if [[ $VERITY_FOUND -eq 0 ]]; then
     fail "No x86-64 root verity partition (GUID $VERITY_GUID) found — dm-verity was not applied"
 fi
 
+# Fix 4: assert no linux-generic (0FC63DAF) partition exists in the finished image.
+# A linux-generic partition (e.g. old rhsm-rw from deviation #14) causes systemd-repart
+# to match it instead of creating the encrypted scratch disk — kata-agent then fails
+# because /dev/mapper/scratch never appears. The base image must have no such partition.
+LINUX_GENERIC_FOUND=0
+for PNUM in 1 2 3 4; do
+    GUID=$(guestfish --ro -a "$QCOW2" -- run : part-get-gpt-type /dev/sda $PNUM 2>/dev/null | tr -d '\n' | tr '[:lower:]' '[:upper:]' || true)
+    [[ -z "$GUID" ]] && continue
+    if [[ "${GUID}" == "0FC63DAF-8483-4772-8E79-3D69D8477DE4" ]]; then
+        LINUX_GENERIC_FOUND=1
+        fail "Part $PNUM has linux-generic GUID (0FC63DAF) — repart will match this instead of creating scratch"
+    fi
+done
+[[ $LINUX_GENERIC_FOUND -eq 0 ]] && ok "No linux-generic partition — systemd-repart scratch creation unblocked"
+
 # Check root GUID exists
 if ! guestfish --ro -a "$QCOW2" -- run : part-list /dev/sda 2>/dev/null | grep -q "part_num"; then
     fail "Could not read partition table"
@@ -236,6 +251,7 @@ try:
         ('UKI filename',        d.get('uki_filename','?')),
         ('Payload image',       d.get('payload_image','?')),
         ('Payload digest',      d.get('payload_digest','?')),
+        ('Pause bundle image',  d.get('pause_bundle_image','?')),
         ('CDH binary date',     d.get('cdh_binary_date','?')),
         ('AA binary date',      d.get('aa_binary_date','?')),
         ('kata-agent date',     d.get('kata_agent_binary_date','?')),

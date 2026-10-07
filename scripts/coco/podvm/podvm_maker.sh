@@ -462,6 +462,9 @@ if [[ "${PAYLOAD_DIGEST}" == "unknown" || -z "${PAYLOAD_DIGEST}" || \
     exit 1
 fi
 
+# PAUSE_BUNDLE is exported by build-rhel10-overlay.sh Step 4 (Fix 3).
+PAUSE_BUNDLE_IMAGE="${PAUSE_BUNDLE:-unknown}"
+
 cat > /etc/podvm-version.json << MANIFEST
 {
   "build_date": "${BUILD_TS}",
@@ -470,6 +473,7 @@ cat > /etc/podvm-version.json << MANIFEST
   "uki_filename": "${UKI_FILE}",
   "payload_image": "${PAYLOAD_IMAGE}",
   "payload_digest": "${PAYLOAD_DIGEST}",
+  "pause_bundle_image": "${PAUSE_BUNDLE_IMAGE}",
   "cdh_binary_date": "${CDH_DATE}",
   "aa_binary_date": "${AA_DATE}",
   "kata_agent_binary_date": "${KA_DATE}"

@@ -211,6 +211,9 @@ cp "${PATCHES_DIR}/coco-components.sh"      "${COCO_SCRIPTS_DIR}/scripts/coco/co
 # B1 fix: replace upstream create-verity-podvm.sh (EXIT trap always exits 0) with
 # our patched version that preserves $? so the container exits non-zero on failure.
 cp "${PATCHES_DIR}/create-verity-podvm.sh"  "${COCO_SCRIPTS_DIR}/scripts/create-verity-podvm.sh"
+# Fix 2: replace upstream create-scratch.sh (no error handling, world-readable key) with
+# our patched version: set -e, umask 077, assert repart created scratch, assert /dev/mapper/scratch.
+cp "${PATCHES_DIR}/create-scratch.sh"       "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/create-scratch.sh"
 echo "✓ IBM overlay scripts copied (including upstream patches)"
 
 # ---------------------------------------------------------------------------
@@ -274,6 +277,10 @@ cp "${BASE_QCOW2}" "${OUTPUT_QCOW2}"
 
 export QCOW2="${OUTPUT_QCOW2}"
 export PODVM_BINARY="registry.redhat.io/openshift-sandboxed-containers/osc-podvm-payload-rhel9:${PAYLOAD_TAG}"
+# Fix 3: pull pause bundle from the same released payload image (digest-pinned), not the
+# upstream Konflux dev build (quay.io/redhat-user-workloads/...) that PAUSE_BUNDLE_DEF
+# defaults to in coco-components.sh. The released payload contains /pause-bundle.tar.gz too.
+export PAUSE_BUNDLE="${PODVM_BINARY_DIGEST_FOR_INJECT}"
 export SSHD_SERVICE="${SSHD_SERVICE}"
 export NVIDIA_DRIVER_VERSION=""
 export DEBUG_BUILD="${DEBUG_BUILD:-}"
@@ -284,6 +291,7 @@ export ACTIVATION_KEY ORG_ID
 # build). Export here for example_run.sh env consistency only — the container uses the baked value.
 export PODVM_BINARY_DIGEST="${PODVM_BINARY_DIGEST_FOR_INJECT}"
 echo "  PODVM_BINARY_DIGEST (already baked in Step 2): ${PODVM_BINARY_DIGEST}"
+echo "  PAUSE_BUNDLE (from released payload): ${PAUSE_BUNDLE}"
 
 cd "${COCO_SCRIPTS_DIR}"
 bash example_run.sh "${OUTPUT_QCOW2}"
