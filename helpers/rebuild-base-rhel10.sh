@@ -6,13 +6,13 @@
 # Deviations: see rhel10-experimental/UPSTREAM_DEVIATIONS.md
 #
 # Produces a date-stamped, read-only base QCOW2:
-#   /tmp/rhel10-ks-base-YYYYMMDD.qcow2
+#   /var/lib/libvirt/images/rhel10/rhel10-ks-base-YYYYMMDD.qcow2
 #
-# Why /tmp and not ~/.local/share/libvirt/images/:
-#   virt-install uses qemu:///system (needed for KVM access — gcoon is in
-#   libvirt group but not kvm group). The system QEMU daemon runs as uid 64055
-#   (libvirt-qemu) which cannot access /home/gcoon. /tmp is world-accessible.
-#   This matches all prior successful builds. See UPSTREAM_DEVIATIONS.md.
+# Location: /var/lib/libvirt/images/rhel10/
+#   owned gcoon:gcoon, ACL grants libvirt-qemu r-x so qemu:///system can
+#   access the disk during virt-install. Safe from /tmp cleanups.
+#   RHEL 9 images live alongside in /var/lib/libvirt/images/ — the rhel10/
+#   subdirectory keeps them separate.
 #
 # This file is NEVER modified after creation. The overlay script (Layer 3)
 # copies it to a dated output path and modifies the copy. Do not pass a base
@@ -30,8 +30,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# Output goes to /tmp so qemu:///system (uid libvirt-qemu) can access it.
-IMAGE_DIR="/tmp"
+# Output goes to /var/lib/libvirt/images/rhel10 — owned by gcoon, ACL grants
+# libvirt-qemu r-x so qemu:///system can read the disk during virt-install.
+IMAGE_DIR="/var/lib/libvirt/images/rhel10"
 # Allow overriding the kickstart file for baseline runs (B-0 uses upstream verbatim).
 KS_FILE="${KS_OVERRIDE:-${SCRIPT_DIR}/rhel10-dm-root.ks}"
 DATE=$(date -u +%Y%m%d)

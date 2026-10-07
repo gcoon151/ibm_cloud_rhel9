@@ -43,10 +43,12 @@ PAYLOAD_TAG="${PAYLOAD_TAG:-1.13.1}"
 SSHD_SERVICE="${SSHD_SERVICE:-true}"
 OUTPUT_PREFIX="${OUTPUT_PREFIX:-rhel10}"
 DATE=$(date -u +%Y%m%d%H)
-OUTPUT_QCOW2="/tmp/${OUTPUT_PREFIX}-${DATE}.qcow2"
-# Log file tied to the output image serial — never collides across builds.
-# Caller should NOT redirect stdout to a generic name; use this path instead.
-BUILD_LOG="/tmp/${OUTPUT_PREFIX}-build-${DATE}.log"
+# Overlay output goes alongside the base in /var/lib/libvirt/images/rhel10/
+# so it is safe from /tmp cleanups and on the same filesystem.
+OUTPUT_DIR="/var/lib/libvirt/images/rhel10"
+OUTPUT_QCOW2="${OUTPUT_DIR}/${OUTPUT_PREFIX}-${DATE}.qcow2"
+# Log file alongside the image — tied to the same date serial.
+BUILD_LOG="${OUTPUT_DIR}/${OUTPUT_PREFIX}-build-${DATE}.log"
 COCO_SCRIPTS_DIR="${REPO_ROOT}/rhel10-experimental/coco-podvm-scripts"
 COS_BUCKET="coon-coco-us-east"
 COS_REGION="us-east"
