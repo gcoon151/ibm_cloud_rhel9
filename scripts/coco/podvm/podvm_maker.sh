@@ -101,16 +101,20 @@ fi
 echo "✓ luks-config extracted, luks-scratch.service present"
 
 # ---------------------------------------------------------------------------
-# Step 4: SELinux context fixes
+# Step 4: SELinux context fixes + firewall
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== [4/6] Fixing SELinux contexts ==="
-# fixes a failure of the podns@netns service
+echo "=== [4/6] Fixing SELinux contexts and firewall ==="
+# fixes a failure of the podns@netns service (SELinux blocks ip netns add on RHEL 10)
 semanage fcontext -a -t bin_t /usr/sbin/ip && restorecon -v /usr/sbin/ip
 # kata-agent binaries
 semanage fcontext -a -t bin_t /usr/local/bin/kata-agent && restorecon -v /usr/local/bin/kata-agent
 semanage fcontext -a -t bin_t /usr/local/bin/kata-agent-clean && restorecon -v /usr/local/bin/kata-agent-clean
-echo "✓ SELinux contexts set"
+# Open port 15150 for agent-protocol-forwarder — required on RHEL 10 where
+# firewalld is active by default and blocks the port otherwise.
+# (upstream coco-podvm-scripts PR #79 — RHEL 10 networking requirements)
+firewall-offline-cmd --zone=public --add-port=15150/tcp
+echo "✓ SELinux contexts set, port 15150 opened in firewall"
 
 # ---------------------------------------------------------------------------
 # Step 5: System configuration (SSHD, services, systemd units)
