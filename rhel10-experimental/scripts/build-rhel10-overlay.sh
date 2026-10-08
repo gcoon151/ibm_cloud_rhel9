@@ -465,6 +465,40 @@ verify_selinux_label "${OUTPUT_QCOW2}" /usr/sbin/ip              bin_t
 verify_selinux_label "${OUTPUT_QCOW2}" /usr/local/bin/kata-agent bin_t
 echo "✓ SELinux labels verified in QCOW2"
 
+# ---------------------------------------------------------------------------
+# STEP 5d: Assert create-scratch.sh in the image has the pbkdf2 optimisation.
+# This catches the case where the wrong tree (RHEL 9 / ibm_cloud_rhel9/scripts/coco/podvm/luks-scratch/)
+# was edited instead of rhel10-experimental/scripts/patches/create-scratch.sh.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Step 5d: Verifying create-scratch.sh optimisation is baked into image ---"
+SCRATCH_CHECK_PART=""
+for _n in 1 2 3 4; do
+    _t=$(guestfish --ro -a "${OUTPUT_QCOW2}" -- run : part-get-gpt-type /dev/sda ${_n} 2>/dev/null \
+         | tr -d '\n' | tr '[:lower:]' '[:upper:]' || true)
+    [[ "${_t}" == "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709" ]] && { SCRATCH_CHECK_PART="/dev/sda${_n}"; break; }
+done
+if [[ -z "${SCRATCH_CHECK_PART}" ]]; then
+    echo "WARNING: Step 5d: could not find root partition — skipping create-scratch.sh check" >&2
+else
+    SCRATCH_SH=$(guestfish --ro -a "${OUTPUT_QCOW2}" -m "${SCRATCH_CHECK_PART}" \
+        -- cat /usr/local/sbin/create-scratch.sh 2>/dev/null || true)
+    if [[ -z "${SCRATCH_SH}" ]]; then
+        echo "ERROR: /usr/local/sbin/create-scratch.sh not found in image" >&2
+        echo "       luks-config.tar.gz was not extracted by podvm_maker.sh" >&2
+        exit 1
+    fi
+    if ! echo "${SCRATCH_SH}" | grep -q -- '--pbkdf pbkdf2'; then
+        echo "ERROR: create-scratch.sh in image does NOT contain '--pbkdf pbkdf2'" >&2
+        echo "       The wrong tree was likely edited (ibm_cloud_rhel9/scripts/coco/podvm/luks-scratch/" >&2
+        echo "       instead of rhel10-experimental/scripts/patches/create-scratch.sh)." >&2
+        echo "       See BUILD_ARCHITECTURE.md ⚠️ CRITICAL callout." >&2
+        exit 1
+    fi
+    echo "  ✓ create-scratch.sh in image contains '--pbkdf pbkdf2' (fast KDF confirmed)"
+fi
+echo "✓ create-scratch.sh optimisation verified"
+
 echo ""
 echo "✓ All verification checks passed. Ready to upload."
 echo ""
