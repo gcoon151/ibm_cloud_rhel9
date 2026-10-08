@@ -53,15 +53,19 @@ COCO_SCRIPTS_DIR="${REPO_ROOT}/rhel10-experimental/coco-podvm-scripts"
 COS_BUCKET="coon-coco-us-east"
 COS_REGION="us-east"
 
-# Validate required vars
-MISSING=()
-[[ -z "${RH_USERNAME:-}" ]]      && MISSING+=("RH_USERNAME")
-[[ -z "${RH_PASSWORD:-}" ]]      && MISSING+=("RH_PASSWORD")
-[[ -z "${ORG_ID:-}" ]]           && MISSING+=("ORG_ID")
-[[ -z "${ACTIVATION_KEY:-}" ]]   && MISSING+=("ACTIVATION_KEY")
-if [[ ${#MISSING[@]} -gt 0 ]]; then
-    echo "ERROR: Missing required variables:"; printf '  - %s\n' "${MISSING[@]}"; exit 1
-fi
+# Validate required vars — check for missing AND for placeholder values from .env.example
+for v in RH_USERNAME RH_PASSWORD ORG_ID ACTIVATION_KEY; do
+    val="${!v:-}"
+    if [[ -z "$val" ]]; then
+        echo "ERROR: $v is not set. Copy .env.example to .env and fill in real values." >&2
+        exit 1
+    fi
+    if [[ "$val" == *"your_"* || "$val" == *"_here"* || "$val" == *"_example"* ]]; then
+        echo "ERROR: $v looks like an unfilled placeholder: '$val'" >&2
+        echo "       .env.example was probably copied over .env. Restore real credentials." >&2
+        exit 1
+    fi
+done
 
 echo "================================================================="
 echo "RHEL 10 peer pod overlay build"
