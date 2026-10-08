@@ -18,6 +18,36 @@
 # =============================================================================
 set -ex
 
+# ---------------------------------------------------------------------------
+# Create vpcuser — IBM Cloud RHEL 10 default SSH user
+#
+# IBM Cloud VPC injects the SSH key into the default_user defined in
+# /etc/cloud/cloud.cfg. On stock IBM RHEL 10 images that user is 'vpcuser'
+# (uid 1000, groups adm+systemd-journal, sudo NOPASSWD:ALL).
+# Our kickstart base creates 'cloud-user' instead. We rename it here so
+# cloud-init's ssh_authorized_keys injection lands on the right user.
+#
+# Without this fix: key is injected into 'vpcuser' by VPC initialization,
+# but the user doesn't exist in the image → no authorized_keys → no SSH.
+# ---------------------------------------------------------------------------
+
+# Rename cloud-user → vpcuser if cloud-user exists; otherwise create fresh
+if id cloud-user &>/dev/null; then
+    usermod -l vpcuser -d /home/vpcuser -m cloud-user
+    groupmod -n vpcuser cloud-user 2>/dev/null || true
+else
+    useradd -m -u 1000 -G adm,systemd-journal -s /bin/bash \
+        -c "VPC Cloud User" vpcuser
+fi
+
+# Ensure sudo NOPASSWD:ALL — matches stock IBM RHEL 10 image
+echo 'vpcuser ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/vpcuser
+chmod 440 /etc/sudoers.d/vpcuser
+
+# Update cloud.cfg default_user to vpcuser so cloud-init writes the key there
+sed -i 's/^\( *name:\) *cloud-user/\1 vpcuser/' /etc/cloud/cloud.cfg
+sed -i 's/^\( *gecos:\).*/\1 VPC Cloud User/' /etc/cloud/cloud.cfg
+
 # CoCo runtime dependencies
 dnf install -y xmlsec1 xmlsec1-openssl
 
