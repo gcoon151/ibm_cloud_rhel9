@@ -132,6 +132,10 @@ EOF
   # kata-agent: RUST_LOG=debug, console output, restart on failure
   mkdir -p /etc/systemd/system/kata-agent.service.d
   cat > /etc/systemd/system/kata-agent.service.d/10-override.conf << 'EOF'
+[Unit]
+After=luks-scratch.service
+Requires=luks-scratch.service
+
 [Service]
 ExecStartPre=sh -c '[ -b /dev/mapper/scratch ] && mount /dev/mapper/scratch /kata-containers'
 Restart=on-failure

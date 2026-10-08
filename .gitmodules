@@ -22,3 +22,6 @@
 [submodule "upstream-repos/confidential-containers-guest-components"]
 	path = upstream-repos/confidential-containers-guest-components
 	url = https://github.com/openshift/confidential-containers-guest-components.git
+[submodule "upstream-repos/kata-containers-upstream"]
+	path = upstream-repos/kata-containers-upstream
+	url = https://github.com/kata-containers/kata-containers.git
