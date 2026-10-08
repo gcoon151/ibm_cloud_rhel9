@@ -138,6 +138,12 @@ EOF
   mkdir -p /etc/systemd/system/kata-agent.service.d
   cat > /etc/systemd/system/kata-agent.service.d/10-override.conf << 'EOF'
 [Unit]
+# Ensures kata-agent never starts until luks-scratch has finished formatting and
+# opening /dev/mapper/scratch. format-scratch.sh now calls systemd-repart directly
+# (unconditionally), so this ordering works regardless of whether dm-verity is active.
+# Requires= means kata-agent fails loudly if luks-scratch fails — correct behaviour;
+# running without encrypted scratch would silently land container layers in RAM overlay.
+# See UPSTREAM_DEVIATIONS.md deviations O-2, O-4.
 After=luks-scratch.service
 Requires=luks-scratch.service
 

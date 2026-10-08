@@ -1,11 +1,73 @@
 #!/bin/bash
+# format-scratch.sh — unconditionally create and format the LUKS scratch partition.
+#
+# Previously luks-scratch.service depended on systemd-repart.service (the system unit).
+# The system systemd-repart.service has a trigger condition: it only runs when dm-verity
+# is active (roothash= present in kernel cmdline). On IBM Cloud, verity.addon.efi is
+# rejected by Secure Boot, so the kernel cmdline has no roothash=, dm-verity is
+# bypassed, systemd-repart is skipped, the scratch device never appears, luks-scratch
+# never starts, and kata-agent (Requires=luks-scratch) never starts.
+#
+# Fix: call systemd-repart directly here, bypassing the trigger condition.
+# The repart.d config at /usr/lib/repart.d/ (installed by luks-config.tar.gz) describes
+# a single 256 MB linux-generic partition labelled "scratch". Running systemd-repart
+# with --definitions pointing there unconditionally creates it on every boot.
+#
+# See UPSTREAM_DEVIATIONS.md deviation O-4.
+
+set -euo pipefail
 
 LUKS_DEV="/dev/disk/by-partlabel/scratch"
 MOUNT_POINT="/kata-containers"
 MAPPER_NAME="scratch"
 KEY_PATH=/run/lukspw.bin
 
-echo "Formatting $LUKS_DEV into LUKS..."
+# ---------------------------------------------------------------------------
+# Step 1: Create the scratch partition unconditionally via systemd-repart.
+# Detect the root disk device (IBM Cloud uses vda, local QEMU may use vda or sda).
+# ---------------------------------------------------------------------------
+echo "Detecting root disk for scratch partition creation..."
+# Try to find the disk that holds the root filesystem
+ROOT_DISK=""
+for disk in /dev/vda /dev/sda; do
+    if [[ -b "$disk" ]]; then
+        ROOT_DISK="$disk"
+        break
+    fi
+done
+if [[ -z "$ROOT_DISK" ]]; then
+    echo "ERROR: Could not find root disk (tried /dev/vda, /dev/sda)" >&2
+    exit 1
+fi
+echo "Root disk: $ROOT_DISK"
+
+echo "Running systemd-repart to create scratch partition..."
+if ! systemd-repart \
+        --dry-run=no \
+        --definitions=/usr/lib/repart.d \
+        --discard=no \
+        "$ROOT_DISK"; then
+    echo "ERROR: systemd-repart failed to create scratch partition" >&2
+    exit 1
+fi
+
+# Wait for the partition label to appear via udev
+echo "Waiting for scratch partition label to appear..."
+DEADLINE=$(( $(date +%s) + 15 ))
+while [[ ! -e "$LUKS_DEV" ]]; do
+    if [[ $(date +%s) -gt $DEADLINE ]]; then
+        echo "ERROR: $LUKS_DEV did not appear within 15 s after systemd-repart" >&2
+        lsblk "$ROOT_DISK" >&2 || true
+        exit 1
+    fi
+    sleep 1
+done
+echo "Scratch partition present: $(readlink -f $LUKS_DEV)"
+
+# ---------------------------------------------------------------------------
+# Step 2: Format and open the scratch partition as LUKS.
+# ---------------------------------------------------------------------------
+echo "Formatting $LUKS_DEV as LUKS..."
 
 dd if=/dev/urandom of=$KEY_PATH bs=64 count=1
 chmod 600 $KEY_PATH

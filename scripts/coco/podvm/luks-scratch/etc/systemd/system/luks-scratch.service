@@ -1,10 +1,18 @@
 [Unit]
-# This unit runs right after the repart service is done and
-# the scratch partition appears
+# format-scratch.sh calls systemd-repart directly (unconditionally) so this unit
+# does NOT depend on systemd-repart.service and does NOT BindsTo the scratch device.
+# Previously this unit had:
+#   Requires=systemd-repart.service
+#   After=systemd-repart.service
+#   BindsTo=dev-disk-by\x2dpartlabel-scratch.device
+# That caused luks-scratch to silently never start when systemd-repart was skipped
+# (which happens whenever dm-verity is not active — i.e. always while verity.addon.efi
+# is unsigned and rejected by IBM Secure Boot). The scratch partition never appeared,
+# the BindsTo device unit never activated, luks-scratch waited forever, and
+# kata-agent (Requires=luks-scratch) never started.
+# Fix: format-scratch.sh runs systemd-repart itself unconditionally.
+# See UPSTREAM_DEVIATIONS.md deviation O-4.
 Description=Format LUKS Scratch Partition
-Requires=systemd-repart.service
-After=systemd-repart.service
-BindsTo=dev-disk-by\x2dpartlabel-scratch.device
 Before=kata-agent.service
 
 [Service]
