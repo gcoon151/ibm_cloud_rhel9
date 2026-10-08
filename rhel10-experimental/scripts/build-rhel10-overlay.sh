@@ -239,6 +239,7 @@ sudo podman rmi localhost/coco-podvm 2>/dev/null && echo "✓ Removed stale coco
 cd "${COCO_SCRIPTS_DIR}"
 # sudo-rs (this Ubuntu host) resets env by default; use --preserve-env to pass secrets.
 sudo --preserve-env=ORG_ID,ACTIVATION_KEY podman build -t coco-podvm \
+    --no-cache \
     --secret id=org_id,env=ORG_ID \
     --secret id=activation_key,env=ACTIVATION_KEY \
     -f Dockerfile .
