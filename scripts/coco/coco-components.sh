@@ -124,12 +124,16 @@ export LIBGUESTFS_DEBUG=1 LIBGUESTFS_TRACE=1
 # NOTE: Kernel removal disabled - breaks agent-protocol-forwarder
 # See TODO.md for future kernel cleanup work
 
+# Write build-time env vars into the guest so podvm_maker.sh can read them
+# (virt-customize --run scripts run in a clean guest env with no outer env vars).
+PODVM_BINARY_DIGEST=${PODVM_BINARY_DIGEST:-""}
 virt-customize \
     --copy-in $ARTIFACTS_FOLDER/podvm-binaries.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/pause-bundle.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/luks-config.tar.gz:/tmp/ \
     ${UPTYCS_COPY_ARGS} \
     ${METRICS_COPY_ARGS} \
+    --run-command "printf 'PODVM_BINARY=%s\nPODVM_BINARY_DIGEST=%s\n' '${PODVM_BINARY}' '${PODVM_BINARY_DIGEST}' > /etc/podvm-build-env" \
     --run $ARTIFACTS_FOLDER/podvm_maker.sh \
     ${UPTYCS_RUN_ARGS} \
     ${METRICS_RUN_ARGS} \

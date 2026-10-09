@@ -462,9 +462,11 @@ AA_DATE=$(epoch_to_date "$AA_MTIME")
 KA_DATE=$(epoch_to_date "$KA_MTIME")
 BUILD_TS=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-# PODVM_BINARY and PODVM_BINARY_DIGEST are injected at build time by build-rhel10-overlay.sh
-# Step 2 (B2 fix) — before the container build — so the real values are baked into the
-# container image and available here inside virt-customize's clean guest env.
+# PODVM_BINARY and PODVM_BINARY_DIGEST are available via one of two mechanisms:
+# - RHEL 10: injected into the container image by build-rhel10-overlay.sh Step 2 (B2 fix)
+# - RHEL 9:  written to /etc/podvm-build-env by coco-components.sh before virt-customize runs
+# Source the file if it exists (virt-customize runs scripts in a clean guest env).
+[[ -f /etc/podvm-build-env ]] && source /etc/podvm-build-env
 PAYLOAD_IMAGE="${PODVM_BINARY:-unknown}"
 PAYLOAD_DIGEST="${PODVM_BINARY_DIGEST:-unknown}"
 
