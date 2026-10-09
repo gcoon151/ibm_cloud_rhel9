@@ -88,13 +88,17 @@ if ! grep -q "image_registry_auth" /etc/agent-config.toml; then
 else
     echo "✓ image_registry_auth already present in agent-config.toml"
 fi
-if grep -q 'guest_components_procs' /etc/agent-config.toml; then
-    sed -i 's/guest_components_procs = "[^"]*"/guest_components_procs = "confidential-data-hub"/' /etc/agent-config.toml
-    echo "✓ Set guest_components_procs = confidential-data-hub"
-else
-    echo 'guest_components_procs = "confidential-data-hub"' >> /etc/agent-config.toml
-    echo "✓ Added guest_components_procs = confidential-data-hub"
+# guest_components_procs is left at the payload default ("none"), matching the upstream golden
+# template (redhat/cloud-api-adaptor podvm/files). The CDH boot race is solved by systemd path
+# units instead: attestation-agent.path -> AA -> confidential-data-hub.path -> CDH ->
+# kata-agent.path -> kata-agent. This only works if NOTHING else pulls kata-agent in at boot —
+# see the luks-scratch.service Wants= fix in Step 3 (Session 22 root cause).
+if ! grep -q '^guest_components_procs = "none"' /etc/agent-config.toml; then
+    echo "ERROR: expected guest_components_procs = \"none\" in payload agent-config.toml, got:" >&2
+    grep guest_components_procs /etc/agent-config.toml >&2 || echo "  (not present)" >&2
+    exit 1
 fi
+echo "✓ guest_components_procs = none (payload default; race handled by kata-agent.path)"
 
 # Enable confidential-data-hub.path — the OSC payload installs the unit file but does
 # NOT create the symlink in multi-user.target.wants. Without it CDH never starts,
@@ -139,6 +143,32 @@ if [[ ! -f /etc/systemd/system/luks-scratch.service ]]; then
 fi
 echo "✓ luks-config extracted, luks-scratch.service present"
 
+# Session 22 ROOT CAUSE FIX: upstream luks-scratch.service has "Wants=kata-agent.service".
+# luks-scratch is enabled (WantedBy=multi-user.target), so that Wants= starts kata-agent at
+# ~T+1s at boot, bypassing kata-agent.path. kata-agent then probes /run/confidential-containers/cdh.sock
+# before CDH exists (~T+4s), CDH_CLIENT stays None, and the first image pull panics
+# (confidential_data_hub/mod.rs:189 .expect). Drop the Wants=; keep Before= (ordering only).
+sed -i '/^Wants=kata-agent\.service[[:space:]]*$/d' /etc/systemd/system/luks-scratch.service
+if grep -q '^Wants=kata-agent' /etc/systemd/system/luks-scratch.service; then
+    echo "ERROR: luks-scratch.service still has Wants=kata-agent.service" >&2
+    exit 1
+fi
+if ! grep -q '^Before=kata-agent.service' /etc/systemd/system/luks-scratch.service; then
+    echo "ERROR: luks-scratch.service lost Before=kata-agent.service" >&2
+    exit 1
+fi
+echo "✓ luks-scratch.service: Wants=kata-agent.service removed (kata-agent now gated by kata-agent.path)"
+
+# Lesson 54: luks-config.tar.gz packs the scratch scripts without the exec bit.
+for f in /usr/local/sbin/format-scratch.sh /usr/local/sbin/create-scratch.sh; do
+    [[ -f "$f" ]] && chmod 0755 "$f"
+done
+if [[ ! -x /usr/local/sbin/create-scratch.sh && ! -x /usr/local/sbin/format-scratch.sh ]]; then
+    echo "ERROR: no executable scratch script in /usr/local/sbin" >&2
+    exit 1
+fi
+echo "✓ scratch scripts are executable"
+
 # kata-agent.service.d/10-override.conf is extracted from luks-config.tar.gz.
 # Upstream uses '[ -b /dev/mapper/scratch ] && mount ...' which exits 1 (and fails
 # kata-agent) when scratch is absent. On IBM Cloud the large boot volume always has
@@ -150,7 +180,14 @@ echo "✓ luks-config extracted, luks-scratch.service present"
 # so systemd-repart can create the scratch partition — see HANDOFF.md Step 5.
 KA_OVERRIDE=/etc/systemd/system/kata-agent.service.d/10-override.conf
 if [[ -f "${KA_OVERRIDE}" ]]; then
-    echo "✓ kata-agent ExecStartPre left as upstream (scratch device required)"
+    # Lesson 55: make the mount idempotent (scratch may already be mounted by luks-scratch).
+    sed -i "s#^ExecStartPre=sh -c '\[ -b /dev/mapper/scratch \] \&\& mount /dev/mapper/scratch /kata-containers'#ExecStartPre=sh -c '[ -b /dev/mapper/scratch ] \&\& (mountpoint -q /kata-containers || mount /dev/mapper/scratch /kata-containers)'#" "${KA_OVERRIDE}"
+    if ! grep -q 'mountpoint -q /kata-containers' "${KA_OVERRIDE}"; then
+        echo "ERROR: idempotent mount edit did not apply to ${KA_OVERRIDE}:" >&2
+        cat "${KA_OVERRIDE}" >&2
+        exit 1
+    fi
+    echo "✓ kata-agent ExecStartPre made idempotent (mountpoint -q || mount)"
 else
     echo "ERROR: ${KA_OVERRIDE} not found — luks-config.tar.gz did not extract it" >&2
     echo "       Without this file kata-agent will run without encrypted scratch (silent RAM overlay)." >&2
@@ -428,6 +465,11 @@ fi
 # Baked into the QCOW2 before dm-verity is computed, so it is part of the
 # signed root hash. Readable at runtime: cat /etc/podvm-version.json
 # ---------------------------------------------------------------------------
+# Lesson 53: tar extraction leaves /usr/local/{bin,sbin} files as unlabeled_t -> SELinux blocks exec.
+echo "=== Relabelling /usr/local/bin and /usr/local/sbin ==="
+restorecon -R /usr/local/bin /usr/local/sbin || true
+echo "✓ restorecon -R /usr/local/bin /usr/local/sbin queued"
+
 echo "=== Writing version manifest ==="
 
 # Each of these is a hard failure — if any binary is missing here, the image
