@@ -70,10 +70,14 @@ if [[ ! -f /etc/agent-config.toml ]]; then
 fi
 echo "  ✓ /etc/agent-config.toml present"
 
-# Patch agent-config.toml: add image_registry_auth if missing (upstream payload omits it).
-# Note: guest_components_procs = "none" is correct — AA and CDH are launched by their
-# own systemd path units (attestation-agent.path, confidential-data-hub.path), not as
-# sub-processes of kata-agent.
+# Patch agent-config.toml:
+#   1. Add image_registry_auth if missing (upstream payload omits it).
+#   2. Set guest_components_procs = "confidential-data-hub" so kata-agent spawns AA+CDH
+#      itself and WAITS for the CDH socket before accepting any RPCs. This eliminates the
+#      CDH/kata-agent boot race (Lesson 47/51/52): when "none", CDH starts via systemd
+#      ~3s after kata-agent, kata-agent stores CDH client = None, and every CDH call panics.
+#      With osc-daemonset:1.13 kata-agent has image-rs compiled in and calls CDH at
+#      CreateSandbox regardless of runtime_pull_image — so this fix is mandatory.
 echo "Patching agent-config.toml..."
 if ! grep -q "image_registry_auth" /etc/agent-config.toml; then
     if ! echo 'image_registry_auth = "file:///run/peerpod/auth.json"' >> /etc/agent-config.toml; then
@@ -83,6 +87,13 @@ if ! grep -q "image_registry_auth" /etc/agent-config.toml; then
     echo "✓ Added image_registry_auth to agent-config.toml"
 else
     echo "✓ image_registry_auth already present in agent-config.toml"
+fi
+if grep -q 'guest_components_procs' /etc/agent-config.toml; then
+    sed -i 's/guest_components_procs = "[^"]*"/guest_components_procs = "confidential-data-hub"/' /etc/agent-config.toml
+    echo "✓ Set guest_components_procs = confidential-data-hub"
+else
+    echo 'guest_components_procs = "confidential-data-hub"' >> /etc/agent-config.toml
+    echo "✓ Added guest_components_procs = confidential-data-hub"
 fi
 
 # Enable confidential-data-hub.path — the OSC payload installs the unit file but does
@@ -353,7 +364,7 @@ if [ "${DEBUG_BUILD:-0}" = "1" ]; then
 
     cat > /etc/agent-config.toml << 'EOF'
 server_addr = "unix:///run/kata-containers/agent.sock"
-guest_components_procs = "none"
+guest_components_procs = "confidential-data-hub"
 image_registry_auth = "file:///run/peerpod/auth.json"
 log_level = "debug"
 EOF

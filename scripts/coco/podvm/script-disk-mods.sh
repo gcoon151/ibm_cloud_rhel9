@@ -126,10 +126,10 @@ fi
 if [ "${DEBUG_BUILD:-0}" = "1" ]; then
   echo "=== DEBUG_BUILD=1: enabling verbose console logging for CoCo services ==="
 
-  # agent-config.toml: debug log level, no signature verification
+  # agent-config.toml: debug log level, cdh spawned by kata-agent (eliminates boot race)
   cat > /etc/agent-config.toml << 'EOF'
 server_addr = "unix:///run/kata-containers/agent.sock"
-guest_components_procs = "none"
+guest_components_procs = "confidential-data-hub"
 image_registry_auth = "file:///run/peerpod/auth.json"
 log_level = "debug"
 EOF
