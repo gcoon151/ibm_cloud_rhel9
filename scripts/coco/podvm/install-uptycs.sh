@@ -196,7 +196,7 @@ echo "[STEP 10/10] Creating symlinks for dm-verity compatibility..."
 # We only create the symlinks here during image build
 
 # Create /etc/osquery as symlink to /var/run/osquery/etc/osquery/
-if [ -d /etc/osquery ]; then
+if [ -e /etc/osquery ] || [ -L /etc/osquery ]; then
     echo "⚠ WARNING: /etc/osquery already exists, removing..."
     rm -rf /etc/osquery
 fi
@@ -205,7 +205,7 @@ echo "  ✓ Created symlink: /etc/osquery -> /var/run/osquery/etc/osquery"
 
 # Create /var/log/osquery as symlink to /var/run/osquery/var/log/osquery/
 mkdir -p /var/log
-if [ -d /var/log/osquery ]; then
+if [ -e /var/log/osquery ] || [ -L /var/log/osquery ]; then
     echo "⚠ WARNING: /var/log/osquery already exists, removing..."
     rm -rf /var/log/osquery
 fi
@@ -214,7 +214,7 @@ echo "  ✓ Created symlink: /var/log/osquery -> /var/run/osquery/var/log/osquer
 
 # Create /var/osquery as symlink to /var/run/osquery/var/osquery/ (for database)
 mkdir -p /var
-if [ -d /var/osquery ]; then
+if [ -e /var/osquery ] || [ -L /var/osquery ]; then
     echo "⚠ WARNING: /var/osquery already exists, removing..."
     rm -rf /var/osquery
 fi

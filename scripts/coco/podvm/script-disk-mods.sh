@@ -31,11 +31,13 @@ set -ex
 # but the user doesn't exist in the image → no authorized_keys → no SSH.
 # ---------------------------------------------------------------------------
 
-# Rename cloud-user → vpcuser if cloud-user exists; otherwise create fresh
+# Rename cloud-user → vpcuser if cloud-user exists; otherwise create fresh.
+# Idempotent: if vpcuser already exists (e.g. hardened build reuses a prior
+# overlay image) just skip creation so this script is safe to re-run.
 if id cloud-user &>/dev/null; then
     usermod -l vpcuser -d /home/vpcuser -m cloud-user
     groupmod -n vpcuser cloud-user 2>/dev/null || true
-else
+elif ! id vpcuser &>/dev/null; then
     useradd -m -u 1000 -G adm,systemd-journal -s /bin/bash \
         -c "VPC Cloud User" vpcuser
 fi

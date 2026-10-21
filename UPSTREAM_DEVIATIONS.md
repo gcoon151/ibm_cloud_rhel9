@@ -51,9 +51,10 @@ IBM modifications to upstream files live in:
 | O-1 | `luks-scratch/30-scratch.conf` | `SizeMaxBytes=268435456` (256 MB cap) | No cap → partition fills ~2.6 GB free space → LUKS+ext4 format takes ~90 s on IBM storage → exceeds hardcoded 30 s kata `checkRequestTimeout` → VM killed | scratch format takes ~90 s, VM dies before kata-agent handshakes |
 | O-2 | `luks-scratch/kata-agent.service.d/10-override.conf` | `After=luks-scratch.service` + `Requires=luks-scratch.service` in `[Unit]` | Without ordering kata-agent races ahead of luks-scratch, writes agent.sock, APF fires, 30 s clock starts before scratch is ready | kata-agent and APF start before scratch is formatted, VM killed at 48.7 s |
 | O-3 | `luks-scratch/format-scratch.sh` | `--pbkdf pbkdf2 --pbkdf-force-iterations 1000` + `mkfs.ext4 -m 0 -E nodiscard,lazy_itable_init=1,lazy_journal_init=1` | Argon2id default KDF takes ~7.4 s luksFormat + ~2 s luksOpen on NVMe (benchmarked). Key is random and ephemeral — strong KDF adds nothing. pbkdf2-1000 drops to <100 ms total KDF overhead. | With large partitions or slow KDF, format still risks racing the timeout |
-| O-4 | `luks-scratch/luks-scratch.service` + `luks-scratch/format-scratch.sh` | Removed `Requires=systemd-repart.service`, `After=systemd-repart.service`, `BindsTo=dev-disk-by\x2dpartlabel-scratch.device` from service unit; `format-scratch.sh` now calls `systemd-repart` directly with `--definitions=/usr/lib/repart.d` | System `systemd-repart.service` has a trigger condition: it only runs when dm-verity is active (roothash= in kernel cmdline). With the grub boot mode deviation M, dm-verity IS now active — but this deviation is retained as defence-in-depth until dm-verity is fully validated end-to-end on IBM Cloud. | Scratch partition is never created; luks-scratch never starts; kata-agent (Requires=luks-scratch) never starts; pod times out. |
+| O-4 | `luks-scratch/luks-scratch.service` + `luks-scratch/format-scratch.sh` | Removed `Requires=systemd-repart.service`, `After=systemd-repart.service`, `BindsTo=dev-disk-by\x2dpartlabel-scratch.device` from service unit; `format-scratch.sh` now calls `systemd-repart` directly with `--definitions=/usr/lib/repart.d` | System `systemd-repart.service` has a trigger condition: it only runs when dm-verity is active (roothash= in kernel cmdline). With the grub boot mode deviation M, dm-verity IS now active and confirmed on IBM TDX — this deviation is retained as defence-in-depth. Revert when the grub+dm-verity approach is superseded or UKI addon signing is implemented. | Scratch partition is never created; luks-scratch never starts; kata-agent (Requires=luks-scratch) never starts; pod times out. |
 | O-5 | `luks-scratch/luks-scratch.service` | Removed `Wants=kata-agent.service` from service unit | Upstream unit includes `Wants=kata-agent.service` + `Before=kata-agent.service`. The `Wants=` pulls kata-agent in at boot before CDH socket is created (~3s race), causing kata-agent to fail probing CDH and panic at first container pull. | kata-agent starts prematurely at boot, CDH client is uninitialized, kata-agent panics on image pull. Revert condition: upstream drops `Wants=kata-agent.service` or kata-agent no longer probes CDH at startup. |
 | Q | `kickstart`, `verity.sh`, `podvm_maker.sh` | `BOOT_MODE=grub`: new kickstart `rhel10-dm-root-grub.ks` (3-partition: EFI + XBOOTLDR /boot + root), `inject_grub_cmdline()` in verity.sh, no tpm2_pcrextend drop-in | IBM TDX Secure Boot (IBM default db: Microsoft UEFI CA) rejects unsigned addon EFI — see full justification in §Q below | dm-verity never enforced on IBM Cloud TDX |
+| CIS | `scripts/coco/podvm/cis-harden.sh` (new, IBM-only) + `HARDENED=1` hook in `patches/coco-components.sh` | CIS L1 Server "safe tier" hardening run via `virt-customize --run` before verity (so covered by roothash). Only when `HARDENED=1` | Upstream `coco-podvm-scripts` has no CIS hardening; Tenable/Nessus CIS scan failures (see `rhel10-experimental/NESSUS_CIS_REVIEW.md`) | Hardened image fails CIS scan items it was built to fix |
 
 ---
 
@@ -390,11 +391,13 @@ BindsTo=dev-disk-by\x2dpartlabel-scratch.device
 
 **The problem**: System `systemd-repart.service` has a trigger condition. On RHEL 10 it only
 runs (creates new partitions) when the verity root is active — i.e. `roothash=` is present
-in the kernel cmdline and dm-verity mounted `/dev/mapper/root`. On IBM Cloud TDX VSIs,
-`verity.addon.efi` is unsigned and rejected by Secure Boot, so dm-verity is never active,
-`systemd-repart` is skipped ("no trigger condition checks were met"), the scratch partition
-device (`/dev/disk/by-partlabel/scratch`) never appears, the `BindsTo=` device unit never
-activates, and `luks-scratch.service` waits indefinitely. With `Requires=luks-scratch` on
+in the kernel cmdline and dm-verity mounted `/dev/mapper/root`. In UKI boot mode on IBM Cloud TDX VSIs,
+`verity.addon.efi` is unsigned and was rejected by Secure Boot, so dm-verity was not active,
+`systemd-repart` was skipped ("no trigger condition checks were met"), the scratch partition
+device (`/dev/disk/by-partlabel/scratch`) never appeared, the `BindsTo=` device unit never
+activated, and `luks-scratch.service` waited indefinitely. (Historical: with `BOOT_MODE=grub`,
+deviation M/Q, dm-verity IS now active and confirmed on IBM TDX; this deviation is retained as
+defence-in-depth.) With `Requires=luks-scratch` on
 `kata-agent`, kata-agent never starts either.
 
 **Our fix**:
@@ -405,7 +408,7 @@ activates, and `luks-scratch.service` waits indefinitely. With `Requires=luks-sc
 
 **Why upstream doesn't have this problem**: Upstream's `scratch-storage.service` is conditional (only runs when CAA writes `/run/peerpod/scratch-space.marker`). Their unit has no `BindsTo=`. Our `luks-scratch.service` runs unconditionally and depended on the system repart, which was the wrong dependency.
 
-**Revert condition**: dm-verity is reliably active on IBM Cloud (i.e. the Secure Boot + verity addon signing problem is fixed). In that case the original `BindsTo=` pattern can be restored, since the scratch device will always appear after repart runs.
+**Revert condition**: the grub+dm-verity approach is superseded OR UKI addon signing is implemented. dm-verity is already active on IBM Cloud TDX in grub mode (confirmed Session 29), so the original `BindsTo=` pattern could be restored and tested whenever convenient; it is retained only as defence-in-depth.
 
 ### O-5: Removed `Wants=kata-agent.service` from `luks-scratch.service`
 
@@ -579,6 +582,23 @@ IBM provides a mechanism to enroll a custom Secure Boot db certificate (plan opt
 `UKI_SECUREBOOT_COEXISTENCE_PLAN.md`). In that case: sign `verity.addon.efi` with our
 cert, revert to the UKI kickstart, remove `inject_grub_cmdline()`, keep all other
 deviations. The grub base image and kickstart remain available as a fallback.
+
+
+---
+
+## CIS: `cis-harden.sh` — CIS Level 1 Server safe-tier hardening (HARDENED=1 only)
+
+**Upstream**: `confidential-devhub/coco-podvm-scripts` has no CIS hardening script or hook.
+
+**Ours**: `scripts/coco/podvm/cis-harden.sh`, invoked from `patches/coco-components.sh` as an extra `virt-customize --run` after `install-uptycs.sh` only when `HARDENED=1` (fails loudly if the script is missing). Runs before the verity hash is computed, so all changes are covered by `roothash=`.
+
+**What it does**: masks `fwupd.service`/`fwupd-refresh.service`/`fwupd-refresh.timer` (cannot be removed: `shim-x64 -> dbxtool -> fwupd`); sets login banners (`/etc/issue`, `/etc/issue.net`, `/etc/motd`); modprobe `install ... /bin/false` + blacklist for unused filesystems/protocols and disables bluetooth; disables core dumps; safe sysctl subset (no ip_forward, no rp_filter); cron file permissions; sshd drop-in (SSH stays enabled).
+
+**What it does NOT do** (needs testing or a user decision — see `NESSUS_CIS_REVIEW.md` §8): sudo hardening, PAM/authselect, grub2 password, firewalld, ip forwarding, rp_filter, PermitRootLogin/AllowUsers, AIDE, `/tmp` + `/dev/shm` mounts.
+
+**Revert condition**: upstream provides CIS hardening, or Tenable scans pass without it.
+
+**Related IBM fixes (idempotency) — NOT the real fix for the failed hardened builds**: `script-disk-mods.sh` (`elif ! id vpcuser`) and `install-uptycs.sh` STEP 10 (`[ -e X ] || [ -L X ]` instead of `[ -d X ]`, because `/etc/osquery` etc. are symlinks that dangle at build time so `-d` is false and `ln -s` failed with "File exists") were made re-runnable after hardened builds failed. Those failures were SYMPTOMS of running the overlay on a base that had ALREADY been overlaid and verity-sealed (`rhel10-2026101216.qcow2`). The real cause is the wrong base (see HANDOFF.md Session 30); a hardened build must start from a clean pre-overlay, pre-verity grub base. The guards are harmless and kept, but do not treat them as the fix.
 
 ---
 
