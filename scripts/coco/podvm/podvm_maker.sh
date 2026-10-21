@@ -250,9 +250,16 @@ apply_selinux_label() {
 echo ""
 echo "=== [4/6] Fixing SELinux contexts and firewall ==="
 
-# /usr/bin/ip (canonical) → restorecon /usr/sbin/ip (on-disk path on RHEL 10)
 # Required for netns@podns.service: SELinux blocks 'ip netns add' without bin_t
-apply_selinux_label /usr/bin/ip /usr/sbin/ip bin_t
+# RHEL 10: /usr/sbin is a symlink to /usr/bin → semanage on /usr/bin/ip, restorecon on /usr/sbin/ip.
+# RHEL 9:  /usr/sbin is a real directory and ip lives at /usr/sbin/ip (no /usr/bin/ip) →
+#          both arguments are /usr/sbin/ip (RHEL 9 deviation: RHEL 9 path was the only
+#          one that worked before the RHEL 10 rewrite; see 6256786 podvm_maker.sh).
+if [[ -L /usr/sbin ]]; then
+    apply_selinux_label /usr/bin/ip /usr/sbin/ip bin_t
+else
+    apply_selinux_label /usr/sbin/ip /usr/sbin/ip bin_t
+fi
 
 # kata-agent binaries — /usr/local/bin has no equivalency rules so both paths are the same
 apply_selinux_label /usr/local/bin/kata-agent       /usr/local/bin/kata-agent       bin_t
