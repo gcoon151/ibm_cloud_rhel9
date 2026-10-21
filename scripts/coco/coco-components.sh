@@ -133,7 +133,7 @@ virt-customize \
     --copy-in $ARTIFACTS_FOLDER/luks-config.tar.gz:/tmp/ \
     ${UPTYCS_COPY_ARGS} \
     ${METRICS_COPY_ARGS} \
-    --run-command "printf 'PODVM_BINARY=%s\nPODVM_BINARY_DIGEST=%s\nBOOT_MODE=%s\n' '${PODVM_BINARY}' '${PODVM_BINARY_DIGEST}' '${BOOT_MODE:-grub}' > /etc/podvm-build-env" \
+    --run-command "printf 'PODVM_BINARY=%s\nPODVM_BINARY_DIGEST=%s\nBOOT_MODE=%s\n' '${PODVM_BINARY}' '${PODVM_BINARY_DIGEST}' '${BOOT_MODE:-uki}' > /etc/podvm-build-env" \
     --run $ARTIFACTS_FOLDER/podvm_maker.sh \
     ${UPTYCS_RUN_ARGS} \
     ${METRICS_RUN_ARGS} \
