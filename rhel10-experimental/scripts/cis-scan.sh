@@ -60,25 +60,35 @@ EOF
 printf 'instance-id: cis-scan\nlocal-hostname: cis-scan\n' > "$WORK/meta-data"
 cloud-localds "$WORK/seed.iso" "$WORK/user-data" "$WORK/meta-data"
 
-echo "--- 2. boot ---"
-qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m "${CIS_MEM:-6144}" -smp 4 -display none \
-    -serial "file:$WORK/console.log" -no-reboot \
-    -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-    -drive if=pflash,format=raw,file="$WORK/vars.fd" \
-    -drive file="$WORK/overlay.qcow2",if=virtio,format=qcow2 \
-    -drive file="$WORK/seed.iso",if=virtio,format=raw \
-    -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22 -device virtio-net-pci,netdev=net0 &
-QPID=$!
+echo "--- 2. boot (qemu is restarted once if the guest does its first-boot SELinux autorelabel reboot) ---"
+boot() {
+    qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m "${CIS_MEM:-6144}" -smp 4 -display none \
+        -serial "file:$WORK/console.log" -no-reboot \
+        -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+        -drive if=pflash,format=raw,file="$WORK/vars.fd" \
+        -drive file="$WORK/overlay.qcow2",if=virtio,format=qcow2 \
+        -drive file="$WORK/seed.iso",if=virtio,format=raw \
+        -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22 -device virtio-net-pci,netdev=net0 &
+    QPID=$!
+}
+boot
+RESTARTS=0
 
-echo "--- 3. wait for ssh (max 240s) ---"
-for i in $(seq 1 48); do
+echo "--- 3. wait for ssh (max 600s) ---"
+for i in $(seq 1 120); do
     for u in root vpcuser; do
         if ssh "${SSH_OPTS[@]}" -o BatchMode=yes "$u@127.0.0.1" true 2>/dev/null; then SSH_USER="$u"; break 2; fi
     done
-    kill -0 "$QPID" 2>/dev/null || { echo "ERROR: qemu exited early" >&2; grep -a -iE "panic|verity" "$WORK/console.log" | head -3 >&2; exit 1; }
+    if ! kill -0 "$QPID" 2>/dev/null; then
+        if grep -aq "autorelabel\|Relabeled\|selinux-autorelabel" "$WORK/console.log" && [[ $RESTARTS -lt 2 ]]; then
+            RESTARTS=$((RESTARTS+1)); echo "  guest rebooted for SELinux autorelabel; restarting qemu ($RESTARTS)"; : > "$WORK/console.log"; boot
+        else
+            echo "ERROR: qemu exited early" >&2; grep -a -iE "panic|verity|Failed to allocate" "$WORK/console.log" | head -3 >&2; exit 1
+        fi
+    fi
     sleep 5
 done
-[[ -n "$SSH_USER" ]] || { echo "ERROR: no ssh within 240s (cloud-init seed not honoured?). Console tail:" >&2; tail -c 600 "$WORK/console.log" >&2; exit 1; }
+[[ -n "$SSH_USER" ]] || { echo "ERROR: no ssh within 600s (cloud-init seed not honoured?). Console tail:" >&2; tail -c 600 "$WORK/console.log" >&2; exit 1; }
 echo "  ssh up as $SSH_USER"
 SUDO=""; [[ "$SSH_USER" != "root" ]] && SUDO="sudo"
 
