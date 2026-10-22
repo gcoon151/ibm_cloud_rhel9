@@ -149,12 +149,9 @@ chmod 700 /etc/ssh/sshd_config.d
 chmod 600 /etc/ssh/sshd_config.d/*.conf
 DONE+=(sshd-dropin)
 
-# --- 10. tier-1 extras: journal-remote pkg (installed but kept disabled), root locked-password, grub + user-init-file perms
-# systemd-journal-remote: previously WAIVED (session 31) because install upgraded systemd .1->.2 and broke boot.
-# Re-tested session 32: base now ships .1 and repo has no upgrade pending — install is safe (only adds libxslt/xmlsec1).
-dnf_add systemd-journal-remote
-systemctl disable --now systemd-journal-remote.service systemd-journal-remote.socket 2>/dev/null || true
-DONE+=(journal-remote)
+# --- 10. tier-1 extras: root locked-password, grub + user-init-file perms
+# systemd-journal-remote (package_systemd-journal-remote_installed) is WAIVED: installing it upgrades systemd .1->.2 and breaks boot.
+# Will be fixed when base image is rebuilt with systemd .2 already present (session 32: confirmed .2 is in repo).
 
 # --- root locked-password: set a SHA-512 hash so ensure_root_password_configured passes.
 # Account stays functionally locked (no login); the hash is a random non-guessable value.
