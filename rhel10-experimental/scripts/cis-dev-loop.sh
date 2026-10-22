@@ -27,17 +27,17 @@ qemu-img create -q -f qcow2 -F qcow2 -b "$BASE" "$DEV"
 trap 'rm -f "$DEV" "$MARK"' EXIT
 
 echo "--- stage 1: virt-customize --run cis-harden.sh + dev verity bypass ---"
-# NO --no-selinux-relabel: new files need labels or systemd freezes ("Failed to allocate manager object"). With the relabel
-# virt-customize drops /.autorelabel, so the guest reboots ONCE at first boot; cis-scan.sh restarts qemu on that exit (Lesson 93).
+# --no-selinux-relabel is REQUIRED here: otherwise virt-customize drops /.autorelabel, and the dev boot (root mounted ro) can never
+# clear it => endless reboot loop. (Unlabeled new files are fine for a config scan; the real build relabels.) Lesson 94/95.
 # register first, exactly as coco-components.sh does (SM_REGISTER); always unregister afterwards, even if harden fails
 rc=0
-virt-customize --memsize 4096 -a "$DEV" \
+virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" \
     --run-command "subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY} >/dev/null" \
     --run-command "echo ${CIS_LEVEL:-1} > /tmp/cis-level" \
     --run "${REPO_ROOT}/scripts/coco/podvm/cis-harden.sh" \
     --run-command "sed -i -E 's#^options .*verity_root_data=PARTUUID=([0-9a-f-]+).*#options ro console=ttyS0 root=PARTUUID=\1 systemd.volatile=overlay#' /boot/loader/entries/*.conf; grep -h '^options' /boot/loader/entries/*.conf" \
     > $HLOG 2>&1 || rc=$?
-virt-customize --memsize 4096 -a "$DEV" --run-command "subscription-manager unregister >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
+virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" --run-command "subscription-manager unregister >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
 [[ $rc -eq 0 ]] || { grep -avE '^\[ *[0-9.]+\] (Setting|Finishing|SELinux|Running: sub)' $HLOG | tail -12 | sed -E 's/activationkey=[^ ]+/activationkey=***/'; echo "ERROR: stage 1 failed (rc=$rc)" >&2; exit 1; }
 # virt-customize does not echo --run output; assert via guestfish on the overlay (AGENTS.md: assert artifacts)
 guestfish --ro -a "$DEV" -i cat /etc/podvm-cis-hardened > $MARK 2>/dev/null \

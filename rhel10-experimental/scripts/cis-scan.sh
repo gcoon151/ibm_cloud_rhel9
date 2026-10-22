@@ -60,7 +60,7 @@ EOF
 printf 'instance-id: cis-scan\nlocal-hostname: cis-scan\n' > "$WORK/meta-data"
 cloud-localds "$WORK/seed.iso" "$WORK/user-data" "$WORK/meta-data"
 
-echo "--- 2. boot (qemu is restarted once if the guest does its first-boot SELinux autorelabel reboot) ---"
+echo "--- 2. boot ---"
 boot() {
     qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m "${CIS_MEM:-6144}" -smp 4 -display none \
         -serial "file:$WORK/console.log" -no-reboot \
@@ -83,11 +83,8 @@ for i in $(seq 1 120); do
         echo "ERROR: guest died at boot (see console.log):" >&2; grep -aE "Freezing|panic|Failed to allocate" "$WORK/console.log" | head -3 >&2; exit 1
     fi
     if ! kill -0 "$QPID" 2>/dev/null; then
-        if grep -aq "autorelabel\|Relabeled\|selinux-autorelabel" "$WORK/console.log" && [[ $RESTARTS -lt 2 ]]; then
-            RESTARTS=$((RESTARTS+1)); echo "  guest rebooted for SELinux autorelabel; restarting qemu ($RESTARTS)"; : > "$WORK/console.log"; boot
-        else
-            echo "ERROR: qemu exited early" >&2; grep -a -iE "panic|verity|Failed to allocate" "$WORK/console.log" | head -3 >&2; exit 1
-        fi
+        echo "ERROR: qemu exited early (autorelabel reboot loop? image edited without --no-selinux-relabel)" >&2
+        grep -a -iE "panic|verity|Failed to allocate|autorelabel" "$WORK/console.log" | head -3 >&2; exit 1
     fi
     sleep 5
 done
