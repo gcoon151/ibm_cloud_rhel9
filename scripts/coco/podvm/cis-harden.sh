@@ -159,8 +159,11 @@ DONE+=(sshd-dropin)
 
 # --- 10. tier-1 extras: journal-remote (installed, kept disabled), root locked-password, password aging on existing accounts, grub + user-init-file perms
 # systemd-journal-remote: safe to install now — systemd pre-flight update above already bumped base to .2.
+# upload service must be ENABLED (service_systemd-journal-upload_enabled); remote socket must be DISABLED.
 dnf_add systemd-journal-remote
-systemctl disable --now systemd-journal-remote.service systemd-journal-remote.socket 2>/dev/null || true
+systemctl unmask systemd-journal-upload.service 2>/dev/null || true
+systemctl enable systemd-journal-upload.service 2>/dev/null || true
+systemctl mask systemd-journal-remote.socket 2>/dev/null || true
 DONE+=(journal-remote)
 
 
