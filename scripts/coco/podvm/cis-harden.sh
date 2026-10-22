@@ -161,8 +161,10 @@ DONE+=(sshd-dropin)
 # systemd-journal-remote: safe to install now — systemd pre-flight update above already bumped base to .2.
 # upload service must be ENABLED (service_systemd-journal-upload_enabled); remote socket must be DISABLED.
 dnf_add systemd-journal-remote
-systemctl unmask systemd-journal-upload.service 2>/dev/null || true
-systemctl enable systemd-journal-upload.service 2>/dev/null || true
+# Enable upload service via symlink (systemctl enable works in virt-customize but use ln -s as belt-and-suspenders)
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sf /usr/lib/systemd/system/systemd-journal-upload.service \
+    /etc/systemd/system/multi-user.target.wants/systemd-journal-upload.service
 systemctl mask systemd-journal-remote.socket 2>/dev/null || true
 DONE+=(journal-remote)
 
