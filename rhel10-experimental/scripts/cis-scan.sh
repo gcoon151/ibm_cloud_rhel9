@@ -21,7 +21,7 @@ PROFILE="${2:-xccdf_org.ssgproject.content_profile_cis_server_l1}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAME="$(basename "${IMG%.qcow2}")"
 OUT="${CIS_OUT_DIR:-${REPO_ROOT}/cis_results}/${NAME}"
-PORT="${CIS_SSH_PORT:-2225}"
+PORT="${CIS_SSH_PORT:-$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')}"   # free port => concurrent scans do not collide
 WORK="$(mktemp -d /tmp/cis-scan-XXXXXX)"
 KEY="${CIS_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 QPID=""
@@ -61,7 +61,7 @@ printf 'instance-id: cis-scan\nlocal-hostname: cis-scan\n' > "$WORK/meta-data"
 cloud-localds "$WORK/seed.iso" "$WORK/user-data" "$WORK/meta-data"
 
 echo "--- 2. boot ---"
-qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m 8192 -smp 4 -display none \
+qemu-system-x86_64 -enable-kvm -cpu host -machine q35 -m "${CIS_MEM:-6144}" -smp 4 -display none \
     -serial "file:$WORK/console.log" -no-reboot \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file="$WORK/vars.fd" \
