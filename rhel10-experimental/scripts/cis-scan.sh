@@ -100,12 +100,14 @@ DS=/usr/share/xml/scap/ssg/content/ssg-rhel10-ds.xml
 oscap xccdf eval --profile "$PROFILE" --results /root/results.xml --report /root/report.html "$DS" >/root/oscap.out 2>&1
 rc=$?   # 0 = all pass, 2 = some fail, anything else = scan error
 [ "$rc" = 0 ] || [ "$rc" = 2 ] || { tail -5 /root/oscap.out; echo "ERROR: oscap rc=$rc"; exit 15; }
+RID=$(grep -o 'TestResult id="[^"]*"' /root/results.xml | head -1 | cut -d'"' -f2)
+oscap xccdf generate fix --fix-type bash --result-id "$RID" --output /root/fix.sh /root/results.xml >/dev/null 2>&1 || true
 echo "OSCAP_RC=$rc"
 REMOTE
 } | rsh "$SUDO bash -s"
 
 echo "--- 5. fetch results ---"
-for f in results.xml report.html oscap.out; do
+for f in results.xml report.html oscap.out fix.sh; do
     rsh "$SUDO cat /root/$f" > "$OUT/$f"
     [[ -s "$OUT/$f" ]] || { echo "ERROR: $f empty" >&2; exit 16; }
 done
