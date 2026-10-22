@@ -21,6 +21,22 @@ echo "cis-harden.sh level=$LEVEL"
 BANNER='Authorized users only. All activity may be monitored and reported.'
 DONE=()
 
+# dnf_add: install packages but FAIL if it upgrades the validated base (systemd/kernel/selinux-policy/dracut).
+# Learned Session 31: `dnf install systemd-journal-remote` upgraded systemd 257-23.el10_2.1 -> .2 and the guest then froze
+# at boot ("Failed to allocate manager object"). The image must keep the base's core packages exactly as validated.
+dnf_add() {
+    local before after
+    before=$(rpm -q systemd kernel-core selinux-policy dracut | sort)
+    dnf install -y "$@" >/root/cis-dnf.out 2>&1 || { tail -5 /root/cis-dnf.out >&2; echo "ERROR: dnf install $* failed" >&2; exit 1; }
+    after=$(rpm -q systemd kernel-core selinux-policy dracut | sort)
+    if [ "$before" != "$after" ]; then
+        echo "ERROR: dnf install $* changed core packages (would break boot / change validated base):" >&2
+        diff <(echo "$before") <(echo "$after") >&2 || true
+        exit 1
+    fi
+    rm -f /root/cis-dnf.out
+}
+
 # --- 1. fwupd: CANNOT be removed (shim-x64 -> dbxtool -> fwupd; dnf refuses, removal would drop the Secure Boot shim).
 # Mask it instead so nothing starts it: that stops the runtime-created uid-62803 /var/cache/private/fwupdmgr
 # (no_files_or_dirs_*) and an outbound-calling timer on a VM with no firmware to manage.
@@ -134,10 +150,7 @@ chmod 600 /etc/ssh/sshd_config.d/*.conf
 DONE+=(sshd-dropin)
 
 # --- 10. tier-1 extras: journal-remote pkg (kept disabled), grub + user-init-file perms
-dnf install -y systemd-journal-remote >/root/cis-dnf.out 2>&1 || { tail -5 /root/cis-dnf.out >&2; echo 'ERROR: dnf systemd-journal-remote failed' >&2; exit 1; }
-rm -f /root/cis-dnf.out
-systemctl mask systemd-journal-remote.service systemd-journal-remote.socket >/dev/null 2>&1 || true
-rpm -q systemd-journal-remote >/dev/null
+# systemd-journal-remote (package_systemd-journal-remote_installed) is WAIVED: installing it upgrades systemd and breaks boot (see dnf_add).
 find -P /boot/grub2/ -maxdepth 1 -perm /u+xs,g+xwrs,o+xwrt -type f -exec chmod u-xs,g-xwrs,o-xwrt {} \;
 for h in $(awk -F: '$3>=1000 && $7!="/sbin/nologin" {print $6}' /etc/passwd); do
     [ -d "$h" ] && find "$h" -maxdepth 1 -type f -name '.*' -exec chmod u-s,g-wxs,o= {} \;
@@ -214,8 +227,7 @@ if [ "$LEVEL" -ge 3 ]; then
     DONE+=(tmp-shm-mounts)
 
     # --- AIDE: install, audit-tool rules, baseline DB (built here so it is covered by dm-verity), daily check
-    dnf install -y aide >/root/cis-dnf.out 2>&1 || { tail -5 /root/cis-dnf.out >&2; echo 'ERROR: dnf aide failed' >&2; exit 1; }
-    rm -f /root/cis-dnf.out
+    dnf_add aide
     for t in auditctl auditd augenrules aureport ausearch autrace; do
         echo "/usr/sbin/$t p+i+n+u+g+s+b+acl+xattrs+sha512" >> /etc/aide.conf
     done
