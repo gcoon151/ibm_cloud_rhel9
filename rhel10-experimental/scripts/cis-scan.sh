@@ -79,6 +79,9 @@ for i in $(seq 1 120); do
     for u in root vpcuser; do
         if ssh "${SSH_OPTS[@]}" -o BatchMode=yes "$u@127.0.0.1" true 2>/dev/null; then SSH_USER="$u"; break 2; fi
     done
+    if grep -aqE "Freezing execution|Kernel panic|Failed to allocate manager object" "$WORK/console.log" 2>/dev/null; then
+        echo "ERROR: guest died at boot (see console.log):" >&2; grep -aE "Freezing|panic|Failed to allocate" "$WORK/console.log" | head -3 >&2; exit 1
+    fi
     if ! kill -0 "$QPID" 2>/dev/null; then
         if grep -aq "autorelabel\|Relabeled\|selinux-autorelabel" "$WORK/console.log" && [[ $RESTARTS -lt 2 ]]; then
             RESTARTS=$((RESTARTS+1)); echo "  guest rebooted for SELinux autorelabel; restarting qemu ($RESTARTS)"; : > "$WORK/console.log"; boot
