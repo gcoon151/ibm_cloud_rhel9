@@ -30,7 +30,7 @@ virt-customize --memsize 4096 -a "$DEV" \
 guestfish --ro -a "$DEV" -i cat /etc/podvm-cis-hardened > /tmp/cis-dev-marker.txt 2>/dev/null \
     || { echo "ERROR: /etc/podvm-cis-hardened missing - cis-harden.sh did not complete" >&2; exit 1; }
 echo "  cis-harden.sh steps: $(tr '\n' ' ' < /tmp/cis-dev-marker.txt)"
-guestfish --ro -a "$DEV" -i cat /boot/loader/entries/*.conf 2>/dev/null | grep -q 'root=PARTUUID=' \
+guestfish --ro -a "$DEV" -i sh 'cat /boot/loader/entries/*.conf' 2>/dev/null | grep -q 'root=PARTUUID=' \
     || { echo "ERROR: verity bypass sed did not apply" >&2; exit 1; }
 
 echo "--- stage 2: boot + scan ---"
