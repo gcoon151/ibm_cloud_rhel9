@@ -29,12 +29,16 @@ trap 'rm -f "$DEV" "$MARK"' EXIT
 echo "--- stage 1: virt-customize --run cis-harden.sh + dev verity bypass ---"
 # --no-selinux-relabel is REQUIRED here: otherwise virt-customize drops /.autorelabel, and the dev boot (root mounted ro) can never
 # clear it => endless reboot loop. (Unlabeled new files are fine for a config scan; the real build relabels.) Lesson 94/95.
+# Lesson 96: selinux-autorelabel-mark.service runs at first boot (ConditionSecurity=!selinux passes in libguestfs context),
+# touches /.autorelabel, then selinux-autorelabel.service runs on the actual qemu boot and reboots the VM. cis-scan.sh uses
+# -no-reboot so qemu exits on that reboot and the scan never runs. Fix: mask both services in the dev overlay only.
 # register first, exactly as coco-components.sh does (SM_REGISTER); always unregister afterwards, even if harden fails
 rc=0
 virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" \
     --run-command "subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY} >/dev/null" \
     --run-command "echo ${CIS_LEVEL:-1} > /tmp/cis-level" \
     --run "${REPO_ROOT}/scripts/coco/podvm/cis-harden.sh" \
+    --run-command "systemctl mask selinux-autorelabel.service selinux-autorelabel-mark.service" \
     --run-command "sed -i -E 's#^options .*verity_root_data=PARTUUID=([0-9a-f-]+).*#options ro console=ttyS0 root=PARTUUID=\1 systemd.volatile=overlay#' /boot/loader/entries/*.conf; grep -h '^options' /boot/loader/entries/*.conf" \
     > $HLOG 2>&1 || rc=$?
 virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" --run-command "subscription-manager unregister >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
