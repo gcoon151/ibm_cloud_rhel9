@@ -26,3 +26,4 @@ build/*.log
 
 # Upstream reference repositories (cloned for reference only)
 # upstream-repos/ — removed: now tracked as git submodules
+cis_results/
