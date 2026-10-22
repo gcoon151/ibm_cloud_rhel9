@@ -149,7 +149,7 @@ chmod 700 /etc/ssh/sshd_config.d
 chmod 600 /etc/ssh/sshd_config.d/*.conf
 DONE+=(sshd-dropin)
 
-# --- 10. tier-1 extras: root locked-password, grub + user-init-file perms
+# --- 10. tier-1 extras: root locked-password, password aging on existing accounts, grub + user-init-file perms
 # systemd-journal-remote (package_systemd-journal-remote_installed) is WAIVED: installing it upgrades systemd .1->.2 and breaks boot.
 # Will be fixed when base image is rebuilt with systemd .2 already present (session 32: confirmed .2 is in repo).
 
@@ -160,6 +160,11 @@ usermod -p "$ROOT_HASH" root
 grep -q '^\$' <(python3 -c "import subprocess; print(subprocess.check_output(['getent','shadow','root']).decode().split(':')[1])")  \
     || { echo "ERROR: root password hash not set" >&2; exit 1; }
 DONE+=(root-locked-password)
+
+# --- password aging on existing accounts (accounts_password_set_max_life_existing)
+# login.defs PASS_MAX_DAYS only affects new accounts; chage sets it for existing ones.
+awk -F: '/^[^:]+:[^!*]/ && ($5 > 365 || $5 == "") {print $1}' /etc/shadow | xargs -r -I{} chage -M 365 {}
+DONE+=(password-aging-existing)
 
 find -P /boot/grub2/ -maxdepth 1 -perm /u+xs,g+xwrs,o+xwrt -type f -exec chmod u-xs,g-xwrs,o-xwrt {} \;
 for h in $(awk -F: '$3>=1000 && $7!="/sbin/nologin" {print $6}' /etc/passwd); do
