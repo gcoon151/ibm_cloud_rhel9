@@ -26,8 +26,12 @@ virt-customize --memsize 4096 -a "$DEV" \
     --run "${REPO_ROOT}/scripts/coco/podvm/cis-harden.sh" \
     --run-command "sed -i -E 's#^options .*verity_root_data=PARTUUID=([0-9a-f-]+).*#options ro console=ttyS0 root=PARTUUID=\1 systemd.volatile=overlay#' /boot/loader/entries/*.conf; grep -h '^options' /boot/loader/entries/*.conf" \
     > /tmp/cis-dev-harden.log 2>&1 || { tail -15 /tmp/cis-dev-harden.log; echo "ERROR: stage 1 failed" >&2; exit 1; }
-grep -a "cis-harden.sh complete" /tmp/cis-dev-harden.log | cut -c1-200 || { echo "ERROR: cis-harden.sh did not complete" >&2; exit 1; }
-grep -aq "root=PARTUUID=" /tmp/cis-dev-harden.log || { echo "ERROR: verity bypass sed did not apply" >&2; exit 1; }
+# virt-customize does not echo --run output; assert via guestfish on the overlay (AGENTS.md: assert artifacts)
+guestfish --ro -a "$DEV" -i cat /etc/podvm-cis-hardened > /tmp/cis-dev-marker.txt 2>/dev/null \
+    || { echo "ERROR: /etc/podvm-cis-hardened missing - cis-harden.sh did not complete" >&2; exit 1; }
+echo "  cis-harden.sh steps: $(tr '\n' ' ' < /tmp/cis-dev-marker.txt)"
+guestfish --ro -a "$DEV" -i cat /boot/loader/entries/*.conf 2>/dev/null | grep -q 'root=PARTUUID=' \
+    || { echo "ERROR: verity bypass sed did not apply" >&2; exit 1; }
 
 echo "--- stage 2: boot + scan ---"
 bash "${REPO_ROOT}/rhel10-experimental/scripts/cis-scan.sh" "$DEV"
