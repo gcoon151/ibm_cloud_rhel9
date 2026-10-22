@@ -294,9 +294,18 @@ fi
 
 # =================================================================== TIER 4: network sysctl
 if [ "$LEVEL" -ge 4 ]; then
+    # setup-nat-for-imds.service is an AWS/Azure IMDS helper — not needed on IBM Cloud.
+    # It sets net.ipv4.ip_forward=1 at runtime, which causes the forwarding CIS failures.
+    # Disabling it lets us set forwarding=0 without breaking IBM Cloud pod networking.
+    systemctl disable setup-nat-for-imds.service 2>/dev/null || true
+    systemctl mask setup-nat-for-imds.service 2>/dev/null || true
+    DONE+=(imds-disabled)
+
     cat > /etc/sysctl.d/99-cis-net.conf <<'EOF'
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.forwarding = 0
+net.ipv4.conf.default.forwarding = 0
 net.ipv6.conf.all.forwarding = 0
 net.ipv6.conf.default.forwarding = 0
 EOF
