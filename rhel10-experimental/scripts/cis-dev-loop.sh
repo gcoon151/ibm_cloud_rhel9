@@ -39,7 +39,8 @@ virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" \
     --run-command "echo ${CIS_LEVEL:-1} > /tmp/cis-level" \
     --run "${REPO_ROOT}/scripts/coco/podvm/cis-harden.sh" \
     --run-command "systemctl mask selinux-autorelabel.service selinux-autorelabel-mark.service" \
-    --run-command "sed -i -E 's#^options .*verity_root_data=PARTUUID=([0-9a-f-]+).*#options ro console=ttyS0 root=PARTUUID=\1 systemd.volatile=overlay#' /boot/loader/entries/*.conf; grep -h '^options' /boot/loader/entries/*.conf" \
+    --run-command "restorecon -R /etc /usr/lib /var/lib 2>/dev/null || true" \
+    --run-command "sed -i -E 's#^options .*verity_root_data=PARTUUID=([0-9a-f-]+).*#options ro console=ttyS0 root=PARTUUID=\1 systemd.volatile=overlay enforcing=0#' /boot/loader/entries/*.conf; grep -h '^options' /boot/loader/entries/*.conf" \
     > $HLOG 2>&1 || rc=$?
 virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" --run-command "subscription-manager unregister >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
 [[ $rc -eq 0 ]] || { grep -avE '^\[ *[0-9.]+\] (Setting|Finishing|SELinux|Running: sub)' $HLOG | tail -12 | sed -E 's/activationkey=[^ ]+/activationkey=***/'; echo "ERROR: stage 1 failed (rc=$rc)" >&2; exit 1; }
