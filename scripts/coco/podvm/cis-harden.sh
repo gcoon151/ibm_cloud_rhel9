@@ -149,8 +149,21 @@ chmod 700 /etc/ssh/sshd_config.d
 chmod 600 /etc/ssh/sshd_config.d/*.conf
 DONE+=(sshd-dropin)
 
-# --- 10. tier-1 extras: journal-remote pkg (kept disabled), grub + user-init-file perms
-# systemd-journal-remote (package_systemd-journal-remote_installed) is WAIVED: installing it upgrades systemd and breaks boot (see dnf_add).
+# --- 10. tier-1 extras: journal-remote pkg (installed but kept disabled), root locked-password, grub + user-init-file perms
+# systemd-journal-remote: previously WAIVED (session 31) because install upgraded systemd .1->.2 and broke boot.
+# Re-tested session 32: base now ships .1 and repo has no upgrade pending — install is safe (only adds libxslt/xmlsec1).
+dnf_add systemd-journal-remote
+systemctl disable --now systemd-journal-remote.service systemd-journal-remote.socket 2>/dev/null || true
+DONE+=(journal-remote)
+
+# --- root locked-password: set a SHA-512 hash so ensure_root_password_configured passes.
+# Account stays functionally locked (no login); the hash is a random non-guessable value.
+ROOT_HASH=$(python3 -c "import crypt,os; print(crypt.crypt(os.urandom(32).hex(), crypt.mksalt(crypt.METHOD_SHA512)))")
+usermod -p "$ROOT_HASH" root
+grep -q '^\$' <(python3 -c "import subprocess; print(subprocess.check_output(['getent','shadow','root']).decode().split(':')[1])")  \
+    || { echo "ERROR: root password hash not set" >&2; exit 1; }
+DONE+=(root-locked-password)
+
 find -P /boot/grub2/ -maxdepth 1 -perm /u+xs,g+xwrs,o+xwrt -type f -exec chmod u-xs,g-xwrs,o-xwrt {} \;
 for h in $(awk -F: '$3>=1000 && $7!="/sbin/nologin" {print $6}' /etc/passwd); do
     [ -d "$h" ] && find "$h" -maxdepth 1 -type f -name '.*' -exec chmod u-s,g-wxs,o= {} \;
