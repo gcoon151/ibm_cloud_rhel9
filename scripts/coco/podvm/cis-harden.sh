@@ -3,11 +3,20 @@
 # Runs INSIDE the guest via virt-customize --run (patches/coco-components.sh, only when HARDENED=1),
 # i.e. BEFORE the dm-verity hash is computed, so every change here is covered by roothash.
 #
-# Scope: step 1 of the hardened image (see rhel10-experimental/NESSUS_CIS_REVIEW.md).
-# Deliberately NOT here (need testing or a user decision): sudo, PAM/authselect, grub2 password,
-# firewalld, ip forwarding, rp_filter, PermitRootLogin/AllowUsers, AIDE, /tmp + /dev/shm mounts.
+# TIERS (cumulative). Level is read from /tmp/cis-level (written by coco-components.sh / cis-dev-loop.sh
+# from HARDENED=1..4; default 1). Each tier is validated (cis-scan + test-podvm) before the next is added,
+# so a regression is attributable to ONE tier. See rhel10-experimental/LESSONS_LEARNED_2026-10-13.md Lesson 93
+# and ibm_cloud_rhel9/UPSTREAM_DEVIATIONS.md (CIS section) for the reason behind every setting.
+#   1 = safe config (banners, modules, coredump, sysctl subset, cron, umask/TMOUT, journald, sshd tuning, perms)
+#   2 = access control (sudo, PAM/authselect, su wheel, PermitRootLogin/AllowUsers, aging, crypto policy)
+#   3 = boot/filesystem (/tmp + /dev/shm mount opts, AIDE, grub password, firewalld)
+#   4 = network sysctl (rp_filter, IPv6 forwarding). IPv4 forwarding is a proposed WAIVER (pod routing).
+# Proposed permanent waivers (not here): ensure_root_password_configured, IPv4 forwarding, runtime-created unowned files.
 # SSH stays enabled (needed to re-run oscap). NEVER add MACs/Ciphers to sshd config on RHEL.
 set -euo pipefail
+LEVEL=$(cat /tmp/cis-level 2>/dev/null || echo 1); rm -f /tmp/cis-level
+case "$LEVEL" in 1|2|3|4) ;; *) echo "ERROR: bad CIS level '$LEVEL'" >&2; exit 1;; esac
+echo "cis-harden.sh level=$LEVEL"
 
 BANNER='Authorized users only. All activity may be monitored and reported.'
 DONE=()
@@ -34,6 +43,7 @@ for m in cramfs freevxfs hfs hfsplus jffs2 usb-storage atm can dccp rds sctp tip
     printf 'install %s /bin/false\nblacklist %s\n' "$m" "$m" > "/etc/modprobe.d/cis-${m}.conf"
 done
 systemctl disable bluetooth.service >/dev/null 2>&1 || true
+systemctl mask bluetooth.service bluetooth.socket >/dev/null 2>&1 || true
 DONE+=(modprobe-blacklist)
 
 # --- 4. core dumps
@@ -80,18 +90,24 @@ install -m 600 -o root -g root /dev/null /etc/cron.allow
 install -m 600 -o root -g root /dev/null /etc/at.allow
 DONE+=(cron)
 
-# --- 7. umask 027 and idle timeout
+# --- 7. umask 027 and idle timeout (forms taken from SSG fix.sh: sed on every uncommented umask; typeset -xr TMOUT in profile.d)
 sed -i -E 's/^(UMASK[[:space:]]+).*/\1027/' /etc/login.defs
-sed -i -E 's/^([[:space:]]*)umask 0?(02|22)\b/\1umask 027/' /etc/profile /etc/bashrc
 grep -qE '^UMASK[[:space:]]+027' /etc/login.defs
-printf 'TMOUT=600\nreadonly TMOUT\nexport TMOUT\n' > /etc/profile.d/cis-tmout.sh
-chmod 644 /etc/profile.d/cis-tmout.sh
+for f in /etc/bashrc /etc/profile; do
+    grep -q "^[^#]*\bumask" "$f" && sed -i -E "s/^([^#]*\bumask)[[:space:]]+[[:digit:]]+/\1 027/g" "$f" || echo "umask 027" >> "$f"
+done
+rm -f /etc/profile.d/cis-tmout.sh
+printf '# CIS: idle timeout\ntypeset -xr TMOUT=900\n' > /etc/profile.d/tmout.sh
+chmod 644 /etc/profile.d/tmout.sh
 DONE+=(umask-tmout)
 
 # --- 8. journald: single logger (journald only), no syslog forward, size-capped persistent
 mkdir -p /etc/systemd/journald.conf.d /var/log/journal
 printf '[Journal]\nStorage=persistent\nCompress=yes\nForwardToSyslog=no\nSystemMaxUse=64M\n' > /etc/systemd/journald.conf.d/cis.conf
 systemctl disable rsyslog.service >/dev/null 2>&1 || true
+mkdir -p /etc/rsyslog.d
+printf '$FileCreateMode 0640\n' > /etc/rsyslog.d/00-rsyslog_filecreatemode.conf
+chmod 644 /etc/rsyslog.d/00-rsyslog_filecreatemode.conf
 DONE+=(journald)
 
 # --- 9. sshd: only settings that cannot lock us out (no PermitRootLogin/AllowUsers/MACs/Ciphers)
@@ -104,7 +120,7 @@ MaxAuthTries 4
 MaxSessions 10
 MaxStartups 10:30:60
 ClientAliveInterval 15
-ClientAliveCountMax 3
+ClientAliveCountMax 1
 PermitUserEnvironment no
 HostbasedAuthentication no
 IgnoreRhosts yes
@@ -113,8 +129,133 @@ EOF
 ssh-keygen -q -t ed25519 -N '' -f /tmp/cis-sshd-test-key
 sshd -t -h /tmp/cis-sshd-test-key || { echo "ERROR: sshd config invalid" >&2; exit 1; }
 rm -f /tmp/cis-sshd-test-key /tmp/cis-sshd-test-key.pub
+chmod 700 /etc/ssh/sshd_config.d
+chmod 600 /etc/ssh/sshd_config.d/*.conf
 DONE+=(sshd-dropin)
 
+# --- 10. tier-1 extras: journal-remote pkg (kept disabled), grub + user-init-file perms
+dnf install -y systemd-journal-remote >/root/cis-dnf.out 2>&1 || { tail -5 /root/cis-dnf.out >&2; echo 'ERROR: dnf systemd-journal-remote failed' >&2; exit 1; }
+rm -f /root/cis-dnf.out
+systemctl mask systemd-journal-remote.service systemd-journal-remote.socket >/dev/null 2>&1 || true
+rpm -q systemd-journal-remote >/dev/null
+find -P /boot/grub2/ -maxdepth 1 -perm /u+xs,g+xwrs,o+xwrt -type f -exec chmod u-xs,g-xwrs,o-xwrt {} \;
+for h in $(awk -F: '$3>=1000 && $7!="/sbin/nologin" {print $6}' /etc/passwd); do
+    [ -d "$h" ] && find "$h" -maxdepth 1 -type f -name '.*' -exec chmod u-s,g-wxs,o= {} \;
+done
+DONE+=(tier1-extras)
+
+
+# =================================================================== TIER 2: access control
+if [ "$LEVEL" -ge 2 ]; then
+    # --- sudo: use_pty, logfile, re-auth timeout (drop-in validated with visudo before it is kept)
+    printf 'Defaults use_pty\nDefaults logfile="/var/log/sudo.log"\nDefaults timestamp_timeout=15\n' > /etc/sudoers.d/00-cis
+    chmod 440 /etc/sudoers.d/00-cis
+    visudo -cf /etc/sudoers.d/00-cis >/dev/null || { echo "ERROR: sudoers drop-in invalid" >&2; exit 1; }
+    DONE+=(sudo)
+
+    # --- PAM via authselect features (faillock, pwhistory, no nullok) + pwquality/faillock/pwhistory settings (SSG values)
+    authselect select local with-faillock with-pwhistory without-nullok --force >/dev/null
+    authselect check >/dev/null
+    cat > /etc/security/pwquality.conf <<'EOF'
+minlen = 14
+minclass = 4
+dictcheck = 1
+difok = 2
+maxrepeat = 3
+maxsequence = 3
+enforce_for_root
+EOF
+    cat > /etc/security/faillock.conf <<'EOF'
+deny = 5
+unlock_time = 900
+EOF
+    printf 'remember = 24\nenforce_for_root\n' > /etc/security/pwhistory.conf
+    DONE+=(pam-authselect)
+
+    # --- su restricted to (empty) group sugroup
+    getent group sugroup >/dev/null || groupadd sugroup
+    grep -qE '^auth\s+required\s+pam_wheel.so\s+use_uid\s+group=sugroup' /etc/pam.d/su || \
+        sed -i -E '0,/^auth\s+include/s//auth            required        pam_wheel.so use_uid group=sugroup\n&/' /etc/pam.d/su
+    grep -qE 'pam_wheel.so use_uid group=sugroup' /etc/pam.d/su
+    DONE+=(su-wheel)
+
+    # --- sshd access: login user on this image is vpcuser (NESSUS_CIS_REVIEW §7.1); root login off.
+    # Separate drop-in so tier 2 is attributable. PermitRootLogin/AllowUsers only - NO MACs/Ciphers.
+    printf 'PermitRootLogin no\nAllowUsers vpcuser\n' > /etc/ssh/sshd_config.d/01-cis-access.conf
+    chmod 600 /etc/ssh/sshd_config.d/01-cis-access.conf
+    id vpcuser >/dev/null || { echo "ERROR: vpcuser does not exist - AllowUsers would lock everyone out" >&2; exit 1; }
+    ssh-keygen -q -t ed25519 -N '' -f /tmp/cis-sshd-test-key
+    sshd -t -h /tmp/cis-sshd-test-key || { echo "ERROR: sshd config invalid (tier 2)" >&2; exit 1; }
+    rm -f /tmp/cis-sshd-test-key /tmp/cis-sshd-test-key.pub
+    DONE+=(sshd-access)
+
+    # --- password aging defaults
+    sed -i -E 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 365/' /etc/login.defs
+    useradd -D -f 45
+    DONE+=(aging)
+
+    # --- crypto policy: SSG DEFAULT + NO-SSH* modules (SSH only; TLS to Tenable/Uptycs unaffected)
+    mkdir -p /etc/crypto-policies/policies/modules
+    printf 'cipher@SSH = -*-CBC\n' > /etc/crypto-policies/policies/modules/NO-SSHCBC.pmod
+    printf 'cipher@SSH = -3DES-CBC -AES-128-CBC -AES-192-CBC -AES-256-CBC\n' > /etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod
+    printf 'mac@SSH = -HMAC-MD5* -UMAC-64* -UMAC-128*\n' > /etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod
+    update-crypto-policies --no-reload --set DEFAULT:NO-SSHCBC:NO-SSHWEAKCIPHERS:NO-SSHWEAKMACS >/dev/null
+    DONE+=(crypto-policy)
+fi
+
+# =================================================================== TIER 3: boot / filesystem
+if [ "$LEVEL" -ge 3 ]; then
+    # --- /dev/shm and /tmp hardened mounts
+    grep -q '^tmpfs /dev/shm ' /etc/fstab || echo 'tmpfs /dev/shm tmpfs defaults,nodev,nosuid,noexec 0 0' >> /etc/fstab
+    mkdir -p /etc/systemd/system/tmp.mount.d
+    printf '[Mount]\nOptions=mode=1777,strictatime,nosuid,nodev,noexec\n' > /etc/systemd/system/tmp.mount.d/cis.conf
+    systemctl enable tmp.mount >/dev/null 2>&1
+    [ -L /etc/systemd/system/local-fs.target.wants/tmp.mount ] || { echo "ERROR: tmp.mount not enabled" >&2; exit 1; }
+    DONE+=(tmp-shm-mounts)
+
+    # --- AIDE: install, audit-tool rules, baseline DB (built here so it is covered by dm-verity), daily check
+    dnf install -y aide >/root/cis-dnf.out 2>&1 || { tail -5 /root/cis-dnf.out >&2; echo 'ERROR: dnf aide failed' >&2; exit 1; }
+    rm -f /root/cis-dnf.out
+    for t in auditctl auditd augenrules aureport ausearch autrace; do
+        echo "/usr/sbin/$t p+i+n+u+g+s+b+acl+xattrs+sha512" >> /etc/aide.conf
+    done
+    /usr/sbin/aide --init >/dev/null 2>&1 || true   # aide returns non-zero for informational conditions; DB presence is asserted next
+    mv -f /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+    [ -s /var/lib/aide/aide.db.gz ] || { echo "ERROR: AIDE database not created" >&2; exit 1; }
+    grep -q '/usr/sbin/aide --check' /etc/crontab || echo '05 4 * * * root /usr/sbin/aide --check' >> /etc/crontab
+    DONE+=(aide)
+
+    # --- grub superuser password: random, hashed, plaintext discarded. BLS entries stay --unrestricted
+    # (headless boot must NOT prompt); only editing the menu / cmdline needs the password.
+    command -v grub2-mkpasswd-pbkdf2 >/dev/null || { echo "ERROR: grub2-mkpasswd-pbkdf2 missing" >&2; exit 1; }
+    GP=$(head -c 24 /dev/urandom | base64)
+    GH=$(printf '%s\n%s\n' "$GP" "$GP" | grub2-mkpasswd-pbkdf2 2>&1 | awk '/grub\.pbkdf2/{print $NF}')
+    unset GP
+    case "$GH" in grub.pbkdf2.*) ;; *) echo "ERROR: grub password hash not generated" >&2; exit 1;; esac
+    printf 'GRUB2_PASSWORD=%s\n' "$GH" > /boot/grub2/user.cfg
+    chmod 600 /boot/grub2/user.cfg
+    unset GH
+    DONE+=(grub-password)
+
+    # --- firewalld: enabled, loopback trusted, 15150/tcp (agent-protocol-forwarder) must remain open
+    rpm -q firewalld >/dev/null
+    systemctl enable firewalld >/dev/null 2>&1
+    firewall-offline-cmd --zone=trusted --add-interface=lo >/dev/null
+    firewall-offline-cmd --zone=public --list-ports | grep -qw '15150/tcp' || { echo "ERROR: 15150/tcp not open in firewalld" >&2; exit 1; }
+    DONE+=(firewalld)
+fi
+
+# =================================================================== TIER 4: network sysctl
+if [ "$LEVEL" -ge 4 ]; then
+    cat > /etc/sysctl.d/99-cis-net.conf <<'EOF'
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv6.conf.all.forwarding = 0
+net.ipv6.conf.default.forwarding = 0
+EOF
+    DONE+=(sysctl-net)
+fi
+
 # --- marker (host-side verify checks this)
-printf '%s\n' "${DONE[@]}" > /etc/podvm-cis-hardened
+printf '%s\n' "level-${LEVEL}" "${DONE[@]}" > /etc/podvm-cis-hardened
 echo "✓ cis-harden.sh complete: ${DONE[*]}"

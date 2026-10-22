@@ -6,7 +6,7 @@
 # The overlay is NOT a releasable image (verity hash no longer matches; boot entry rewritten) and is deleted on exit.
 # Real verification = full build (build-rhel10-overlay.sh HARDENED=1) + cis-scan.sh, then IBM Cloud.
 #
-# Usage: bash rhel10-experimental/scripts/cis-dev-loop.sh [base.qcow2]    (default: newest rhel10-hardened-*.qcow2)
+# Usage: CIS_LEVEL=1..4 bash rhel10-experimental/scripts/cis-dev-loop.sh [base.qcow2]   (tiers cumulative; see cis-harden.sh)    (default: newest rhel10-hardened-*.qcow2)
 # Output: cis_results/cis-dev-overlay/{summary.txt,failures.tsv,...}; harden log /tmp/cis-dev-harden.log
 # Time:   stage 1 ~1 min, stage 2 ~5 min
 # =============================================================================
@@ -24,6 +24,7 @@ trap 'rm -f "$DEV"' EXIT
 echo "--- stage 1: virt-customize --run cis-harden.sh + dev verity bypass ---"
 # --no-selinux-relabel: virt-customize otherwise drops /.autorelabel, which reboots the guest at boot (dev only; build does its own labelling)
 virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" \
+    --run-command "echo ${CIS_LEVEL:-1} > /tmp/cis-level" \
     --run "${REPO_ROOT}/scripts/coco/podvm/cis-harden.sh" \
     --run-command "sed -i -E 's#^options .*verity_root_data=PARTUUID=([0-9a-f-]+).*#options ro console=ttyS0 root=PARTUUID=\1 systemd.volatile=overlay#' /boot/loader/entries/*.conf; grep -h '^options' /boot/loader/entries/*.conf" \
     > /tmp/cis-dev-harden.log 2>&1 || { tail -15 /tmp/cis-dev-harden.log; echo "ERROR: stage 1 failed" >&2; exit 1; }

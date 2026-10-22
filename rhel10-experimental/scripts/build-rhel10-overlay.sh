@@ -41,7 +41,7 @@ fi
 # Defaults
 PAYLOAD_TAG="${PAYLOAD_TAG:-1.13.1}"
 SSHD_SERVICE="${SSHD_SERVICE:-true}"
-OUTPUT_PREFIX="${OUTPUT_PREFIX:-$([[ "${HARDENED:-}" == "1" ]] && echo rhel10-hardened || echo rhel10)}"
+OUTPUT_PREFIX="${OUTPUT_PREFIX:-$([[ -n "${HARDENED:-}" ]] && echo rhel10-hardened || echo rhel10)}"
 BOOT_MODE="${BOOT_MODE:-grub}"
 DATE=$(date -u +%Y%m%d%H)
 # Overlay output goes alongside the base in /var/lib/libvirt/images/rhel10/
@@ -590,7 +590,7 @@ echo "✓ Uptycs EDR installed and enabled"
 # ---------------------------------------------------------------------------
 # STEP 5f: HARDENED=1 only — assert cis-harden.sh ran and fwupd is gone (host-side, on the QCOW2)
 # ---------------------------------------------------------------------------
-if [[ "${HARDENED:-}" == "1" ]]; then
+if [[ -n "${HARDENED:-}" ]]; then
     echo ""
     echo "--- Step 5f: Verifying CIS hardening in image ---"
     HF=0

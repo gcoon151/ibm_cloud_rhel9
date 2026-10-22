@@ -101,9 +101,10 @@ done
 
 # IBM MOD: HARDENED=1 -> CIS safe-tier hardening (scripts/coco/podvm/cis-harden.sh), run before verity.
 HARDEN_ARGS=()
-if [[ "${HARDENED:-}" == "1" ]]; then
+if [[ -n "${HARDENED:-}" ]]; then
+    [[ "${HARDENED}" =~ ^[1-4]$ ]] || { echo "ERROR: HARDENED must be 1-4 (CIS tier), got '${HARDENED}'" >&2; exit 1; }
     [[ -s "$ARTIFACTS_FOLDER/cis-harden.sh" ]] || { echo "ERROR: HARDENED=1 but $ARTIFACTS_FOLDER/cis-harden.sh missing" >&2; exit 1; }
-    HARDEN_ARGS=(--run "$ARTIFACTS_FOLDER/cis-harden.sh")
+    HARDEN_ARGS=(--run-command "echo ${HARDENED} > /tmp/cis-level" --run "$ARTIFACTS_FOLDER/cis-harden.sh")
 fi
 
 virt-customize --memsize 8192 \
