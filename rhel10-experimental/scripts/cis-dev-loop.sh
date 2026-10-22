@@ -17,17 +17,24 @@ BASE="${1:-$(ls -t ${DIR}/rhel10-hardened-*.qcow2 | head -1)}"
 DEV="${DIR}/cis-dev-overlay.qcow2"
 [[ -f "$BASE" ]] || { echo "ERROR: base not found: $BASE" >&2; exit 1; }
 
+[[ -f "${REPO_ROOT}/.env" ]] && { set -a; source "${REPO_ROOT}/.env"; set +a; }
+[[ -n "${ORG_ID:-}" && -n "${ACTIVATION_KEY:-}" ]] || { echo "ERROR: ORG_ID/ACTIVATION_KEY needed (cis-harden.sh tiers use dnf)" >&2; exit 1; }
 rm -f "$DEV"
 qemu-img create -q -f qcow2 -F qcow2 -b "$BASE" "$DEV"
 trap 'rm -f "$DEV"' EXIT
 
 echo "--- stage 1: virt-customize --run cis-harden.sh + dev verity bypass ---"
 # --no-selinux-relabel: virt-customize otherwise drops /.autorelabel, which reboots the guest at boot (dev only; build does its own labelling)
+# register first, exactly as coco-components.sh does (SM_REGISTER); always unregister afterwards, even if harden fails
+rc=0
 virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" \
+    --run-command "subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY} >/dev/null" \
     --run-command "echo ${CIS_LEVEL:-1} > /tmp/cis-level" \
     --run "${REPO_ROOT}/scripts/coco/podvm/cis-harden.sh" \
     --run-command "sed -i -E 's#^options .*verity_root_data=PARTUUID=([0-9a-f-]+).*#options ro console=ttyS0 root=PARTUUID=\1 systemd.volatile=overlay#' /boot/loader/entries/*.conf; grep -h '^options' /boot/loader/entries/*.conf" \
-    > /tmp/cis-dev-harden.log 2>&1 || { tail -15 /tmp/cis-dev-harden.log; echo "ERROR: stage 1 failed" >&2; exit 1; }
+    > /tmp/cis-dev-harden.log 2>&1 || rc=$?
+virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" --run-command "subscription-manager unregister >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
+[[ $rc -eq 0 ]] || { grep -avE '^\[ *[0-9.]+\] (Setting|Finishing|SELinux|Running: sub)' /tmp/cis-dev-harden.log | tail -12 | sed -E 's/activationkey=[^ ]+/activationkey=***/'; echo "ERROR: stage 1 failed (rc=$rc)" >&2; exit 1; }
 # virt-customize does not echo --run output; assert via guestfish on the overlay (AGENTS.md: assert artifacts)
 guestfish --ro -a "$DEV" -i cat /etc/podvm-cis-hardened > /tmp/cis-dev-marker.txt 2>/dev/null \
     || { echo "ERROR: /etc/podvm-cis-hardened missing - cis-harden.sh did not complete" >&2; exit 1; }
