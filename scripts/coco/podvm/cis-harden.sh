@@ -185,7 +185,7 @@ if [ "$LEVEL" -ge 2 ]; then
     # SSG rule accounts_password_pam_modules_in_authselect_profile requires profile to match "custom/*".
     # Create custom/hardening based on local so the check passes while keeping the same PAM behaviour.
     authselect select local with-faillock with-pwhistory without-nullok --force >/dev/null
-    authselect create-profile hardening -b local >/dev/null
+    authselect list 2>/dev/null | grep -q 'custom/hardening' || authselect create-profile hardening -b local >/dev/null
     authselect select custom/hardening with-faillock with-pwhistory without-nullok --force >/dev/null
     authselect check >/dev/null
     cat > /etc/security/pwquality.conf <<'EOF'
