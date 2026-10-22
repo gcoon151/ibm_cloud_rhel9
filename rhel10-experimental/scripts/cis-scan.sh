@@ -42,6 +42,7 @@ cleanup() {
         rsh 'sudo subscription-manager unregister >/dev/null 2>&1 || true' 2>/dev/null || true
     fi
     [[ -n "$QPID" ]] && kill "$QPID" 2>/dev/null || true
+    [[ -s "$WORK/console.log" ]] && cp "$WORK/console.log" "$OUT/console.log" 2>/dev/null || true
     rm -rf "$WORK"
 }
 trap cleanup EXIT
