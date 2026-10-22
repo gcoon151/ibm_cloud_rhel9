@@ -167,7 +167,11 @@ if [ "$LEVEL" -ge 2 ]; then
     DONE+=(sudo)
 
     # --- PAM via authselect features (faillock, pwhistory, no nullok) + pwquality/faillock/pwhistory settings (SSG values)
+    # SSG rule accounts_password_pam_modules_in_authselect_profile requires profile to match "custom/*".
+    # Create custom/hardening based on local so the check passes while keeping the same PAM behaviour.
     authselect select local with-faillock with-pwhistory without-nullok --force >/dev/null
+    authselect create-profile hardening -b local >/dev/null
+    authselect select custom/hardening with-faillock with-pwhistory without-nullok --force >/dev/null
     authselect check >/dev/null
     cat > /etc/security/pwquality.conf <<'EOF'
 minlen = 14
@@ -207,12 +211,14 @@ EOF
     useradd -D -f 45
     DONE+=(aging)
 
-    # --- crypto policy: SSG DEFAULT + NO-SSH* modules (SSH only; TLS to Tenable/Uptycs unaffected)
+    # --- crypto policy: SSG DEFAULT + NO-SSH* + NO-WEAKMAC modules (configure_custom_crypto_policy_cis)
+    # NO-SSHWEAKMACS includes -HMAC-SHA1* per SSG fix.sh requirement; NO-WEAKMAC removes -*-128* MACs globally.
     mkdir -p /etc/crypto-policies/policies/modules
     printf 'cipher@SSH = -*-CBC\n' > /etc/crypto-policies/policies/modules/NO-SSHCBC.pmod
     printf 'cipher@SSH = -3DES-CBC -AES-128-CBC -AES-192-CBC -AES-256-CBC\n' > /etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod
-    printf 'mac@SSH = -HMAC-MD5* -UMAC-64* -UMAC-128*\n' > /etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod
-    update-crypto-policies --no-reload --set DEFAULT:NO-SSHCBC:NO-SSHWEAKCIPHERS:NO-SSHWEAKMACS >/dev/null
+    printf 'mac@SSH = -HMAC-MD5* -UMAC-64* -UMAC-128* -HMAC-SHA1*\n' > /etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod
+    printf 'mac = -*-128*\n' > /etc/crypto-policies/policies/modules/NO-WEAKMAC.pmod
+    update-crypto-policies --no-reload --set DEFAULT:NO-SSHCBC:NO-SSHWEAKCIPHERS:NO-SSHWEAKMACS:NO-WEAKMAC >/dev/null
     DONE+=(crypto-policy)
 fi
 
