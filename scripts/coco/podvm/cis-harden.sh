@@ -306,8 +306,6 @@ if [ "$LEVEL" -ge 4 ]; then
     cat > /etc/sysctl.d/99-cis-net.conf <<'EOF'
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
-net.ipv4.conf.all.forwarding = 0
-net.ipv4.conf.default.forwarding = 0
 net.ipv6.conf.all.forwarding = 0
 net.ipv6.conf.default.forwarding = 0
 EOF
