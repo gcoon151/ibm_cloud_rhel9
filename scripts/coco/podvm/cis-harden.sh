@@ -21,17 +21,8 @@ echo "cis-harden.sh level=$LEVEL"
 BANNER='Authorized users only. All activity may be monitored and reported.'
 DONE=()
 
-# --- 0. Pre-flight: update systemd to latest in repo so dnf_add guard does not block systemd-journal-remote install.
-# The ISO ships systemd .1; the repo has .2. Updating here (before dnf_add's baseline snapshot) means .2 becomes
-# the validated base, and installing systemd-journal-remote (which depends on .2) passes the guard cleanly.
-dnf update -y systemd systemd-libs systemd-pam systemd-udev >/root/cis-systemd-update.out 2>&1 || {
-    tail -5 /root/cis-systemd-update.out >&2; echo "ERROR: systemd pre-flight update failed" >&2; exit 1
-}
-rm -f /root/cis-systemd-update.out
-echo "  systemd: $(rpm -q systemd)"
-
 # dnf_add: install packages but FAIL if it upgrades the validated base (systemd/kernel/selinux-policy/dracut).
-# Baseline snapshot taken AFTER the systemd pre-flight update above, so .2 is already the validated version.
+# systemd-journal-remote is WAIVED until base image is rebuilt with systemd .2 (see Lesson 94 / NESSUS_CIS_REVIEW.md).
 dnf_add() {
     local before after
     before=$(rpm -q systemd kernel-core selinux-policy dracut | sort)
@@ -157,16 +148,9 @@ chmod 700 /etc/ssh/sshd_config.d
 chmod 600 /etc/ssh/sshd_config.d/*.conf
 DONE+=(sshd-dropin)
 
-# --- 10. tier-1 extras: journal-remote (installed, kept disabled), root locked-password, password aging on existing accounts, grub + user-init-file perms
-# systemd-journal-remote: safe to install now — systemd pre-flight update above already bumped base to .2.
-# upload service must be ENABLED (service_systemd-journal-upload_enabled); remote socket must be DISABLED.
-dnf_add systemd-journal-remote
-# Enable upload service via symlink (systemctl enable works in virt-customize but use ln -s as belt-and-suspenders)
-mkdir -p /etc/systemd/system/multi-user.target.wants
-ln -sf /usr/lib/systemd/system/systemd-journal-upload.service \
-    /etc/systemd/system/multi-user.target.wants/systemd-journal-upload.service
-systemctl mask systemd-journal-remote.socket 2>/dev/null || true
-DONE+=(journal-remote)
+# --- 10. tier-1 extras: root locked-password, password aging on existing accounts, grub + user-init-file perms
+# systemd-journal-remote WAIVED: installing it upgrades systemd .1->.2 which breaks boot (Lesson 94).
+# Fix path: rebuild base ISO with .2 already present, then uncomment the install block.
 
 
 # --- root locked-password: set a SHA-512 hash so ensure_root_password_configured passes.
