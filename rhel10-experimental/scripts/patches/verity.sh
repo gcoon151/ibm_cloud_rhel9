@@ -89,7 +89,12 @@ VERITY_FOLDER=$(realpath "$VERITY_FOLDER")
 ADDON_SBAT="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md
 coco-podvm-uki-addon,1,Red Hat,coco-podvm-uki-addon,1,mailto:secalert@redhat.com"
 
-LUKS_MINIMAL_SPACE_MB=2500
+# Unallocated space added to the disk for the boot-time LUKS scratch partition
+# (create-scratch.sh, no SizeMaxBytes). Guest-pulled images unpack there, so this is the
+# pod VM's total image-pull capacity: compressed layers + unpacked files at the same time.
+# CAA does not set an IBM Cloud boot-volume size, so the disk is the image size.
+# Format time does not depend on size (pbkdf2 + lazy mkfs: ~35 MB written at 256 MB-10 GB).
+LUKS_MINIMAL_SPACE_MB=8192
 # VERITY_MAX_SPACE_MB=512
 
 nbd_mounted=0
@@ -144,21 +149,25 @@ RESIZE_DISK=${RESIZE_DISK:-"yes"}
 EFI_PARTITION_UUID="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 CONSOLE_CMDLINE="console=ttyS0"
 
+MB=$((1024 * 1024))
+# IBM MOD: margin left free inside the shrunk root filesystem, and around the verity hash.
+ROOT_MARGIN_MB=64
+VERITY_MIN_MB=64
+
 function resize_disk()
 {
+    # IBM MOD: resize to an explicit target (computed by shrink_root_to_fit) instead of
+    # "current + LUKS_MINIMAL_SPACE_MB + 7%". The target may be smaller than the current size.
     DISK_RESIZE=$1
-    MB=$((1024 * 1024))
+    rounded_size=$(( ($2 + MB - 1) / MB * MB ))
     current_size=$(qemu-img info -f $DISK_FORMAT --output json $DISK_RESIZE | jq '."virtual-size"')
-    export current_size
-    luks_min_space=$((LUKS_MINIMAL_SPACE_MB * MB))
-    # verity_max_space=$((VERITY_MAX_SPACE_MB * MB))
-    verity_max_space=$((current_size * 7 / 100)) # get 7% for verity
-    export verity_max_space
-    new_size=$((current_size + luks_min_space + verity_max_space))
-    rounded_size=$(((new_size + MB - 1) / MB * MB))
     echo "Current disk size: $current_size"
     echo "New disk size: $rounded_size"
-    qemu-img resize "$DISK_RESIZE" -f $DISK_FORMAT "${rounded_size}"
+    if (( rounded_size < current_size )); then
+        qemu-img resize --shrink "$DISK_RESIZE" -f $DISK_FORMAT "${rounded_size}"
+    else
+        qemu-img resize "$DISK_RESIZE" -f $DISK_FORMAT "${rounded_size}"
+    fi
     echo "Image resized."
 
     # IBM MOD: Relocate GPT backup header to new end of disk via nbd block device.
@@ -240,27 +249,87 @@ function call_fsck()
     echo "fsck applied"
 }
 
+function shrink_root_to_fit()
+{
+    # IBM MOD: dm-verity makes root read-only, so free space inside it can never be used.
+    # The kickstart's root uses --grow so the build has room for dnf installs; here, after
+    # every write to root is done (coco-components.sh runs before verity.sh), shrink the
+    # root filesystem and partition to the contents + ROOT_MARGIN_MB. Then size the verity
+    # hash from the real root size and set the disk to root end + hash + scratch reserve.
+    # Everything left over becomes the boot-time LUKS scratch partition (create-scratch.sh).
+    local fs_type root_num last_node block_size min_blocks cur_blocks target_blocks
+    local root_start root_sectors root_end
+    fs_type=$(blkid -o value -s TYPE /dev/$ROOT_PN)
+    if [[ "$fs_type" != "ext4" ]]; then
+        echo "ERROR: root filesystem is '$fs_type'; shrink_root_to_fit supports ext4 only" >&2
+        exit 1
+    fi
+    last_node=$(sfdisk -J "$NBD_DEVICE" | jq -r '.partitiontable.partitions | max_by(.start) | .node')
+    if [[ "$last_node" != "/dev/$ROOT_PN" ]]; then
+        echo "ERROR: root (/dev/$ROOT_PN) is not the last partition ($last_node); cannot shrink in place" >&2
+        exit 1
+    fi
+    root_num=$(cat /sys/class/block/$ROOT_PN/partition)
+
+    # e2fsck exits 1 when it corrected something; only >1 is a failure.
+    e2fsck -f -y /dev/$ROOT_PN || [ $? -le 1 ]
+    block_size=$(dumpe2fs -h /dev/$ROOT_PN 2>/dev/null | awk -F: '/^Block size/ {gsub(/ /, "", $2); print $2}')
+    cur_blocks=$(dumpe2fs -h /dev/$ROOT_PN 2>/dev/null | awk -F: '/^Block count/ {gsub(/ /, "", $2); print $2}')
+    min_blocks=$(resize2fs -P /dev/$ROOT_PN 2>/dev/null | awk -F: '/minimum size/ {gsub(/ /, "", $2); print $2}')
+    target_blocks=$(( min_blocks + ROOT_MARGIN_MB * MB / block_size ))
+    # Round the filesystem to whole MiB so the partition can match it exactly.
+    target_blocks=$(( (target_blocks * block_size + MB - 1) / MB * MB / block_size ))
+    echo "Root fs: ${cur_blocks} blocks now, ${min_blocks} minimum, ${target_blocks} target (${block_size} B blocks)"
+    if (( target_blocks < cur_blocks )); then
+        resize2fs /dev/$ROOT_PN "$target_blocks"
+        root_sectors=$(( target_blocks * block_size / 512 ))
+        # Same start, type and UUID; only the size changes.
+        echo ",${root_sectors}" | sfdisk --no-reread --no-tell-kernel -N "$root_num" "$NBD_DEVICE"
+        partprobe "$NBD_DEVICE"
+        udevadm settle
+        sleep 2
+        e2fsck -f -n /dev/$ROOT_PN
+    fi
+
+    root_start=$(sfdisk -J "$NBD_DEVICE" | jq -r ".partitiontable.partitions[] | select(.node == \"/dev/$ROOT_PN\") | .start")
+    root_sectors=$(sfdisk -J "$NBD_DEVICE" | jq -r ".partitiontable.partitions[] | select(.node == \"/dev/$ROOT_PN\") | .size")
+    root_size_bytes=$(( root_sectors * 512 ))
+    root_end=$(( (root_start + root_sectors) * 512 ))
+    # systemd-repart (252) builds the hash with 512-byte hash blocks on 512-byte-sector disks:
+    # 16 sha256 digests per block, so the tree is ~1/15 of the data (measured: 94163968 bytes
+    # for 1412431872). That is where upstream's flat "7% of the disk" came from.
+    verity_max_space=$(( (root_size_bytes / 15 + 8 * MB + MB - 1) / MB * MB ))
+    (( verity_max_space < VERITY_MIN_MB * MB )) && verity_max_space=$(( VERITY_MIN_MB * MB ))
+    # + 2 MiB: partition alignment and the GPT backup header.
+    target_disk_size=$(( root_end + verity_max_space + LUKS_MINIMAL_SPACE_MB * MB + 2 * MB ))
+    root_min_line="SizeMinBytes=${root_size_bytes}"
+    export root_size_bytes verity_max_space target_disk_size root_min_line
+    echo "Root partition: $(( root_size_bytes / MB )) MiB; verity: $(( verity_max_space / MB )) MiB; scratch reserve: ${LUKS_MINIMAL_SPACE_MB} MiB; disk target: $(( target_disk_size / MB )) MiB"
+}
+
 function apply_dmverity()
 {
     # create config files and folders for systemd-repart and UKI
     WORKDIR=conf
     mkdir $WORKDIR
 
-    # Verity partition has to be 7% of the original partition.
+    # IBM MOD: hash partition sized from the real root (shrink_root_to_fit), fixed size and
+    # no PaddingWeight, so it doesn't swallow free space meant for the scratch partition.
     echo "[Partition]
     Type=root-verity
     Verity=hash
     VerityMatchKey=root
-    PaddingWeight=1
-    SizeMinBytes=64M
+    SizeMinBytes=${verity_max_space}
     SizeMaxBytes=${verity_max_space}" > $WORKDIR/verity.conf
 
-    # Used just to reference the root
+    # Used just to reference the root. IBM MOD: pin root to its current (shrunk) size, or
+    # systemd-repart grows it back into the free space.
     echo "[Partition]
     Type=root
     Verity=data
     VerityMatchKey=root
-    SizeMaxBytes=${current_size}" > $WORKDIR/root.conf
+    ${root_min_line}
+    SizeMaxBytes=${root_size_bytes}" > $WORKDIR/root.conf
 
     SYSTEMD_LOG_LEVEL=debug systemd-repart $NBD_DEVICE --dry-run=no --definitions=$WORKDIR --no-pager --json=pretty | jq -r '.[] | select(.type == "root-x86-64-verity") | .roothash' > $WORKDIR/roothash.txt
     RH=$(cat $WORKDIR/roothash.txt)
@@ -461,15 +530,38 @@ function create_uki_addon()
 
 print_params
 
-if [ "$RESIZE_DISK" = "yes" ]; then
-    echo ""
-    echo "Resizing disk..."
-    resize_disk $DISK
-fi
-
 cd $VERITY_FOLDER
 
 mkdir mnt
+
+if [ "$RESIZE_DISK" = "yes" ]; then
+    # IBM MOD: shrink root to its contents first, then resize the disk to fit (see
+    # shrink_root_to_fit). nbd is connected for the shrink and disconnected for the resize.
+    echo ""
+    echo "Shrinking root to fit, then resizing disk..."
+    modprobe nbd 2>/dev/null || true
+    nbd_mounted=1
+    qemu-nbd -c $NBD_DEVICE -f $DISK_FORMAT $DISK
+    # Fresh nbd connect: the partition table read is async (see Deviation #9).
+    udevadm settle
+    partprobe "$NBD_DEVICE"
+    udevadm settle
+    sleep 2
+    find_efi_root_part
+    call_fsck
+    shrink_root_to_fit
+    qemu-nbd --disconnect $NBD_DEVICE
+    nbd_mounted=0
+    udevadm settle
+    sleep 1
+    resize_disk $DISK $target_disk_size
+else
+    current_size=$(qemu-img info -f $DISK_FORMAT --output json $DISK | jq '."virtual-size"')
+    # RESIZE_DISK=no: upstream sizing, root not pinned (it can't grow: no free space added).
+    root_size_bytes=$current_size
+    root_min_line=""
+    verity_max_space=$(( current_size * 7 / 100 ))
+fi
 
 # IBM MOD: Assert nbd is available before attempting to use it.
 # modprobe nbd fails inside a container even with --privileged if the host kernel

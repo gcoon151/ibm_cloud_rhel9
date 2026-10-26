@@ -27,8 +27,11 @@ poweroff
 
 ignoredisk --only-use=sda
 clearpart --none --initlabel
-part /boot/efi --fstype="efi"  --ondisk=sda --size=512  --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
-part /boot     --fstype="ext4" --ondisk=sda --size=1024 --label=boot
+part /boot/efi --fstype="efi"  --ondisk=sda --size=256  --fsoptions="defaults,uid=0,gid=0,umask=077,shortname=winnt"
+# EFI/boot are sized for one kernel: the image never installs a second one (holds ~9 MB / ~61 MB).
+part /boot     --fstype="ext4" --ondisk=sda --size=512 --label=boot
+# Root grows to fill the base disk so the build has room for dnf installs. verity.sh
+# (shrink_root_to_fit) shrinks it to its contents before computing the verity hash.
 part /         --fstype="ext4" --ondisk=sda --grow --maxsize=0
 
 %packages

@@ -56,12 +56,12 @@ if [[ "${BOOT_MODE}" == "grub" ]]; then
     KS_FILE="${KS_OVERRIDE:-${SCRIPT_DIR}/rhel10-dm-root-grub.ks}"
     KS_NAME="rhel10-dm-root-grub.ks"
     BASE_PREFIX="${OUTPUT_PREFIX:-rhel10-grub-base}"
-    DISK_SIZE=10   # grub mode needs /boot partition + root; 10 GiB vs 7 GiB
+    DISK_SIZE=10   # build headroom; verity.sh shrinks root and the disk to fit afterwards
 else
     KS_FILE="${KS_OVERRIDE:-${SCRIPT_DIR}/rhel10-dm-root.ks}"
     KS_NAME="rhel10-dm-root.ks"
     BASE_PREFIX="${OUTPUT_PREFIX:-rhel10-ks-base}"
-    DISK_SIZE=7
+    DISK_SIZE=7    # build headroom; verity.sh shrinks root and the disk to fit afterwards
 fi
 
 OUTPUT_IMAGE="${IMAGE_DIR}/${BASE_PREFIX}-${DATE}.qcow2"
