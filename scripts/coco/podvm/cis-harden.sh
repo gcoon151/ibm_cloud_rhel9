@@ -280,12 +280,12 @@ fi
 
 # =================================================================== TIER 4: network sysctl
 if [ "$LEVEL" -ge 4 ]; then
-    # setup-nat-for-imds.service is an AWS/Azure IMDS helper — not needed on IBM Cloud.
-    # It sets net.ipv4.ip_forward=1 at runtime, which causes the forwarding CIS failures.
-    # Disabling it lets us set forwarding=0 without breaking IBM Cloud pod networking.
-    systemctl disable setup-nat-for-imds.service 2>/dev/null || true
-    systemctl mask setup-nat-for-imds.service 2>/dev/null || true
-    DONE+=(imds-disabled)
+    # Leave setup-nat-for-imds.service ENABLED. Red Hat's OSC payload (osc-release-v1.13,
+    # openshift/cloud-api-adaptor 6de893db07) enables it for every provider, IBM Cloud
+    # included; its activation chain ends agent.sock -> APF -> setup-nat-for-imds, and its
+    # Wants=agent-protocol-forwarder.service is part of the tested path. Disabling it
+    # (formerly "imds-disabled") broke pods with CreateContainer timeout. It sets
+    # net.ipv4.ip_forward=1 at runtime, so the two IPv4 forwarding CIS rules stay waived.
 
     cat > /etc/sysctl.d/99-cis-net.conf <<'EOF'
 net.ipv4.conf.all.rp_filter = 1
