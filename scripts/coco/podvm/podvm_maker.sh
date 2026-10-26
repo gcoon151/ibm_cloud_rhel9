@@ -282,6 +282,10 @@ echo "✓ luks-scratch.service enabled"
 
 # Configure SSH service based on SSHD_SERVICE environment variable.
 # Default is enabled (true); set to 'false' to produce a hardened image.
+# virt-customize --run scripts get a clean guest env, so SSHD_SERVICE only arrives via
+# /etc/podvm-build-env (written by coco-components.sh). Read it here, before the check;
+# it used to be sourced only at the version manifest, so SSHD_SERVICE=false was ignored.
+[[ -f /etc/podvm-build-env ]] && source /etc/podvm-build-env
 if [ "${SSHD_SERVICE:-true}" = "false" ]; then
     echo "Disabling SSH service for hardened image..."
     if ! systemctl disable sshd.service; then
