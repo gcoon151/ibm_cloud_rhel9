@@ -321,6 +321,14 @@ well within the available budget after kata-agent starts.
 **Revert condition**: Upstream adds a `SizeMaxBytes` appropriate for their disk sizing, or
 upstream switches to a non-blocking scratch mechanism.
 
+**REVERTED (2026-10-26)**: the cap is removed. Guest-pulled images unpack onto this partition
+(`/kata-containers` is bind-mounted onto `/run/kata-containers` by `run-kata\x2dcontainers.mount`),
+so 256 MB caused `No space left on device (os error 28)` on guest pulls. A 1.19 GB image failed
+on its first pull, and a 9-container pod stopped after ~4 images. With O-3's format flags, the
+size no longer drives format time. Measured on loop devices with the exact `format-scratch.sh`
+commands: 33 MB written at 256 MB, 35 MB at 2.6 GB, 39 MB at 10 GB. That's ~1–2 s at ~30 MB/s.
+The original ~90 s was non-lazy `mkfs` plus Argon2id, which O-3 removed.
+
 ### O-2: `After=luks-scratch.service` + `Requires=luks-scratch.service` in `kata-agent.service.d/10-override.conf`
 
 **Upstream `kata-agent.service`**:
