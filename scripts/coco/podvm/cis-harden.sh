@@ -22,7 +22,7 @@ BANNER='Authorized users only. All activity may be monitored and reported.'
 DONE=()
 
 # dnf_add: install packages but FAIL if it upgrades the validated base (systemd/kernel/selinux-policy/dracut).
-# systemd-journal-remote is WAIVED until base image is rebuilt with systemd .2 (see Lesson 94 / NESSUS_CIS_REVIEW.md).
+# systemd-journal-remote comes from the base kickstart (version-matched to systemd), never from dnf here (Lesson 94).
 dnf_add() {
     local before after
     before=$(rpm -q systemd kernel-core selinux-policy dracut | sort)
@@ -149,8 +149,9 @@ chmod 600 /etc/ssh/sshd_config.d/*.conf
 DONE+=(sshd-dropin)
 
 # --- 10. tier-1 extras: root locked-password, password aging on existing accounts, grub + user-init-file perms
-# systemd-journal-remote WAIVED: installing it upgrades systemd .1->.2 which breaks boot (Lesson 94).
-# Fix path: rebuild base ISO with .2 already present, then uncomment the install block.
+# systemd-journal-remote: installed by the base kickstart from the ISO, version-matched to systemd.
+# Installing it here with dnf upgraded systemd and froze boot (Lesson 94). Record whether it is present.
+rpm -q systemd-journal-remote >/dev/null 2>&1 && DONE+=(journal-remote-from-base)
 
 
 # --- root locked-password: set a SHA-512 hash so ensure_root_password_configured passes.
@@ -285,9 +286,21 @@ if [ "$LEVEL" -ge 4 ]; then
     # included; its activation chain ends agent.sock -> APF -> setup-nat-for-imds, and its
     # Wants=agent-protocol-forwarder.service is part of the tested path. Disabling it
     # (formerly "imds-disabled") broke pods with CreateContainer timeout. It sets
-    # net.ipv4.ip_forward=1 at runtime, so the two IPv4 forwarding CIS rules stay waived.
+    # net.ipv4.ip_forward=1 at runtime; the drop-in below turns IPv4 forwarding back off right
+    # after, keeping the unit and its ordering as Red Hat ships them. IBM Cloud doesn't need the
+    # IMDS NAT path that forwarding serves. If pods still work, sysctl_net_ipv4_conf_{all,default}
+    # _forwarding pass with forwarding genuinely off. If pods break, remove the drop-in and the two
+    # forwarding lines: pod networking needs forwarding, and that's a Red Hat payload issue.
+    mkdir -p /etc/systemd/system/setup-nat-for-imds.service.d
+    cat > /etc/systemd/system/setup-nat-for-imds.service.d/10-cis-no-forwarding.conf <<'EOF'
+[Service]
+ExecStartPost=/usr/sbin/sysctl -qw net.ipv4.conf.all.forwarding=0 net.ipv4.conf.default.forwarding=0
+EOF
+    DONE+=(imds-forwarding-off)
 
     cat > /etc/sysctl.d/99-cis-net.conf <<'EOF'
+net.ipv4.conf.all.forwarding = 0
+net.ipv4.conf.default.forwarding = 0
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
 net.ipv6.conf.all.forwarding = 0

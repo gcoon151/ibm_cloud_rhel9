@@ -91,6 +91,9 @@ part /         --fstype="ext4" --ondisk=sda --grow --maxsize=0
 @^minimal-environment
 openssh-server
 redhat-release
+# CIS package_systemd-journal-remote_installed: install it here, from the same ISO as systemd,
+# so the versions match. Installing it later with dnf upgraded systemd and froze boot (Lesson 94).
+systemd-journal-remote
 
 -linux-firmware*
 -iwl*

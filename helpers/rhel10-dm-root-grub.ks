@@ -51,6 +51,9 @@ tpm2-tools
 efibootmgr
 cryptsetup
 e2fsprogs
+# CIS package_systemd-journal-remote_installed: install it here, from the same ISO as systemd,
+# so the versions match. Installing it later with dnf upgraded systemd and froze boot (Lesson 94).
+systemd-journal-remote
 
 # Grub/Dracut boot requirements instead of UKI
 kernel-core
