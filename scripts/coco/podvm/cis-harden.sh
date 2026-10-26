@@ -151,7 +151,18 @@ DONE+=(sshd-dropin)
 # --- 10. tier-1 extras: root locked-password, password aging on existing accounts, grub + user-init-file perms
 # systemd-journal-remote: installed by the base kickstart from the ISO, version-matched to systemd.
 # Installing it here with dnf upgraded systemd and froze boot (Lesson 94). Record whether it is present.
-rpm -q systemd-journal-remote >/dev/null 2>&1 && DONE+=(journal-remote-from-base)
+if rpm -q systemd-journal-remote >/dev/null 2>&1; then
+    DONE+=(journal-remote-from-base)
+    # With the package present, CIS also checks service_systemd-journal-upload_enabled and
+    # socket_systemd-journal-remote_disabled (code from 1ea9417/54fc52b, reverted with Lesson 94).
+    # journal-upload needs URL= in /etc/systemd/journal-upload.conf to ship logs anywhere.
+    systemctl unmask systemd-journal-upload.service 2>/dev/null || true
+    mkdir -p /etc/systemd/system/multi-user.target.wants
+    ln -sf /usr/lib/systemd/system/systemd-journal-upload.service \
+        /etc/systemd/system/multi-user.target.wants/systemd-journal-upload.service
+    systemctl mask systemd-journal-remote.socket 2>/dev/null || true
+    DONE+=(journal-upload-enabled journal-remote-socket-masked)
+fi
 
 
 # --- root locked-password: set a SHA-512 hash so ensure_root_password_configured passes.
