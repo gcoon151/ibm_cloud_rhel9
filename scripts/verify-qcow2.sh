@@ -287,15 +287,14 @@ for BIN in kata-agent agent-protocol-forwarder; do
     fi
 done
 
-# Post-check: assert create-scratch.sh in the image is our patched version.
-# The upstream version has no error handling and exits 0 on failure.
-# This check confirms the luks-scratch tarball was built from the patched source.
+# Post-check: assert scratch script in the image is our patched version.
+# RHEL 10 uses create-scratch.sh; RHEL 9 uses format-scratch.sh. Check both.
 SCRATCH_PATCHED=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- \
-    cat /usr/local/sbin/create-scratch.sh 2>/dev/null | grep -c 'set -euo pipefail' || true)
+    sh 'grep -c "set -euo pipefail" /usr/local/sbin/create-scratch.sh /usr/local/sbin/format-scratch.sh 2>/dev/null | awk -F: "{s+=\$2} END{print s+0}"' 2>/dev/null || echo 0)
 if [[ "${SCRATCH_PATCHED}" -ge 1 ]]; then
-    ok "create-scratch.sh is patched (set -euo pipefail present)"
+    ok "scratch script is patched (set -euo pipefail present)"
 else
-    fail "create-scratch.sh is NOT patched — upstream version in image; scratch failures will be hidden"
+    fail "scratch script NOT patched — upstream version in image; scratch failures will be hidden"
 fi
 
 # ---------------------------------------------------------------------------
