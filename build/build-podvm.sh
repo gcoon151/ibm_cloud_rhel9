@@ -258,15 +258,14 @@ build_qcow2() {
     time ./example_run.sh
     
     if [ $? -eq 0 ]; then
-        # Repair QCOW2 metadata corruption caused by dm-verity/systemd-repart
-        # This must happen AFTER the container exits (image no longer locked)
-        if [ "$APPLY_VERITY" = "true" ]; then
-            log_info "Repairing QCOW2 metadata after dm-verity creation..."
-            if qemu-img check -r all "$QCOW2" 2>&1 | tee /tmp/qemu-img-repair.log | grep -q "Repairing"; then
-                log_info "✓ QCOW2 metadata repaired"
-            else
-                log_info "✓ No repairs needed"
-            fi
+        # Repair QCOW2 metadata corruption caused by systemd-repart (scratch or verity).
+        # systemd-repart modifies the partition table inside the QCOW2 via qemu-nbd, which
+        # can leave stale refcount entries. Must run AFTER the container exits (image unlocked).
+        log_info "Repairing QCOW2 metadata after systemd-repart..."
+        if qemu-img check -r all "$QCOW2" 2>&1 | tee /tmp/qemu-img-repair.log | grep -q "Repairing"; then
+            log_info "✓ QCOW2 metadata repaired"
+        else
+            log_info "✓ No repairs needed"
         fi
         
         log_info "QCOW2 build SUCCESSFUL ✓"
