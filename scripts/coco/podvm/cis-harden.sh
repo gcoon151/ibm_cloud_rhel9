@@ -294,24 +294,14 @@ fi
 if [ "$LEVEL" -ge 4 ]; then
     # Leave setup-nat-for-imds.service ENABLED. Red Hat's OSC payload (osc-release-v1.13,
     # openshift/cloud-api-adaptor 6de893db07) enables it for every provider, IBM Cloud
-    # included; its activation chain ends agent.sock -> APF -> setup-nat-for-imds, and its
-    # Wants=agent-protocol-forwarder.service is part of the tested path. Disabling it
-    # (formerly "imds-disabled") broke pods with CreateContainer timeout. It sets
-    # net.ipv4.ip_forward=1 at runtime; the drop-in below turns IPv4 forwarding back off right
-    # after, keeping the unit and its ordering as Red Hat ships them. IBM Cloud doesn't need the
-    # IMDS NAT path that forwarding serves. If pods still work, sysctl_net_ipv4_conf_{all,default}
-    # _forwarding pass with forwarding genuinely off. If pods break, remove the drop-in and the two
-    # forwarding lines: pod networking needs forwarding, and that's a Red Hat payload issue.
-    mkdir -p /etc/systemd/system/setup-nat-for-imds.service.d
-    cat > /etc/systemd/system/setup-nat-for-imds.service.d/10-cis-no-forwarding.conf <<'EOF'
-[Service]
-ExecStartPost=/usr/sbin/sysctl -qw net.ipv4.conf.all.forwarding=0 net.ipv4.conf.default.forwarding=0
-EOF
-    DONE+=(imds-forwarding-off)
-
+    # included; it sets net.ipv4.ip_forward=1 at runtime which the CAA VXLAN tunnel requires.
+    # Disabling it (formerly "imds-disabled") broke pods with CreateContainer timeout. The cis2
+    # experiment confirmed that forcing ipv4 forwarding=0 AFTER the service runs also breaks
+    # pods — forwarding must stay on. sysctl_net_ipv4_conf_{all,default}_forwarding are
+    # therefore genuine waivers: a CAA pod VM routes pod traffic by design.
+    # IPv6 forwarding is off because no IPv6 pod traffic flows through the VM.
+    # rp_filter=1 is safe: traffic arrives/departs the same VXLAN interface.
     cat > /etc/sysctl.d/99-cis-net.conf <<'EOF'
-net.ipv4.conf.all.forwarding = 0
-net.ipv4.conf.default.forwarding = 0
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.conf.default.rp_filter = 1
 net.ipv6.conf.all.forwarding = 0
