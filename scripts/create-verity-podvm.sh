@@ -188,7 +188,11 @@ echo ""
 echo "Calling verity..."
 export DISK_FORMAT
 export RESIZE_DISK
-export APPLY_VERITY=true
+# Lesson 101: respect APPLY_VERITY from the caller environment.
+# Previously hardcoded to true, causing RHEL 9 builds (which don't use dm-verity)
+# to always get a spurious root-x86-64-verity partition. RHEL 10 callers export
+# APPLY_VERITY=true; RHEL 9 callers (example_run.sh) pass APPLY_VERITY=false.
+export APPLY_VERITY=${APPLY_VERITY:-true}
 if [[ -n "${IMAGE_PRIVATE_KEY}" && -n "${IMAGE_CERTIFICATE_PEM}" ]]; then
     export SB_PRIVATE_KEY=$IMAGE_PRIVATE_KEY
     export SB_CERTIFICATE=$IMAGE_CERTIFICATE_PEM
