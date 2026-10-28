@@ -40,6 +40,11 @@ fi
 [[ -n "${NVIDIA_DRIVER_VERSION:-}" ]] && run_extras+=" -e NVIDIA_DRIVER_VERSION=${NVIDIA_DRIVER_VERSION} "
 [[ -n "${BOOT_MODE:-}" ]] && run_extras+=" -e BOOT_MODE=${BOOT_MODE} "
 [[ -n "${HARDENED:-}" ]] && run_extras+=" -e HARDENED=${HARDENED} "
+# Lesson 101: create-verity-podvm.sh (container entrypoint) hardcodes APPLY_VERITY=true.
+# For RHEL 9 builds (no verity), we must pass APPLY_VERITY=false explicitly to override it.
+# RHEL 10 builds set APPLY_VERITY=true in build-rhel10-overlay.sh.
+# Default here is false (RHEL 9 path); callers that want verity must export APPLY_VERITY=true.
+run_extras+=" -e APPLY_VERITY=${APPLY_VERITY:-false} "
 
 # Bind-mount root's registry auth into the container so podman inside can pull from
 # registry.redhat.io. sudo podman login (in build-rhel10-overlay.sh Step 4) writes
