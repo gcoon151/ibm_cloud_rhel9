@@ -93,13 +93,21 @@ if [[ $GPT_SKIP -eq 0 ]]; then
         trap - EXIT
     else
         echo "  GPT check found issues — attempting auto-repair with sgdisk -e..."
+        # Disconnect read-only nbd, reconnect read-write, run sgdisk -e on the device
         _nbd_cleanup
         trap - EXIT
-        # sgdisk -e relocates the backup GPT header to end of disk (corrupted by systemd-repart/qemu-nbd)
-        if sudo sgdisk -e "$QCOW2" 2>&1 | grep -q "relocated\|The operation has completed"; then
-            ok "GPT backup header relocated successfully (sgdisk -e)"
+        # sgdisk -e needs a writable block device — connect nbd read-write for repair
+        if sudo modprobe nbd max_part=8 2>/dev/null && sudo qemu-nbd --connect="$GPT_NBD" "$QCOW2" 2>/dev/null; then
+            sudo udevadm settle 2>/dev/null || true
+            REPAIR_OUT=$(sudo sgdisk -e "$GPT_NBD" 2>&1 || true)
+            sudo qemu-nbd --disconnect "$GPT_NBD" 2>/dev/null || true
+            if echo "$REPAIR_OUT" | grep -q "relocated\|The operation has completed successfully"; then
+                ok "GPT backup header relocated successfully (sgdisk -e on nbd device)"
+            else
+                echo "  Retrying GPT check after repair attempt..."
+            fi
         else
-            echo "  Retrying GPT check after repair attempt..."
+            echo "  WARN: could not reconnect nbd read-write for repair — will verify only"
         fi
         # Re-verify after repair
         if sudo modprobe nbd max_part=8 2>/dev/null && sudo qemu-nbd --read-only --connect="$GPT_NBD" "$QCOW2" 2>/dev/null; then
