@@ -72,6 +72,10 @@ if ! sudo modprobe nbd max_part=8 2>/dev/null; then
     GPT_SKIP=1
 fi
 if [[ $GPT_SKIP -eq 0 ]]; then
+    # Kill any stale qemu-nbd processes on nbd0 from previous runs (zombies survive EXIT trap)
+    sudo kill -9 $(pgrep -f "qemu-nbd.*${GPT_NBD}") 2>/dev/null || true
+    sudo qemu-nbd --disconnect "$GPT_NBD" 2>/dev/null || true
+    sleep 1
     # Trap to ensure nbd is always disconnected
     _nbd_cleanup() { sudo qemu-nbd --disconnect "$GPT_NBD" 2>/dev/null || true; }
     trap '_nbd_cleanup' EXIT
