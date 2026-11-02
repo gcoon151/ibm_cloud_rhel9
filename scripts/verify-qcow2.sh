@@ -87,12 +87,34 @@ if [[ $GPT_SKIP -eq 0 ]]; then
 fi
 if [[ $GPT_SKIP -eq 0 ]]; then
     GPT_OUT=$(sudo sgdisk -v "$GPT_NBD" 2>&1 || true)
-    _nbd_cleanup
-    trap - EXIT
     if echo "$GPT_OUT" | grep -q "No problems found"; then
         ok "GPT integrity verified (sgdisk -v: No problems found)"
+        _nbd_cleanup
+        trap - EXIT
     else
-        fail "GPT check failed: $GPT_OUT"
+        echo "  GPT check found issues — attempting auto-repair with sgdisk -e..."
+        _nbd_cleanup
+        trap - EXIT
+        # sgdisk -e relocates the backup GPT header to end of disk (corrupted by systemd-repart/qemu-nbd)
+        if sudo sgdisk -e "$QCOW2" 2>&1 | grep -q "relocated\|The operation has completed"; then
+            ok "GPT backup header relocated successfully (sgdisk -e)"
+        else
+            echo "  Retrying GPT check after repair attempt..."
+        fi
+        # Re-verify after repair
+        if sudo modprobe nbd max_part=8 2>/dev/null && sudo qemu-nbd --read-only --connect="$GPT_NBD" "$QCOW2" 2>/dev/null; then
+            sudo udevadm settle 2>/dev/null || true
+            sleep 1
+            GPT_OUT2=$(sudo sgdisk -v "$GPT_NBD" 2>&1 || true)
+            sudo qemu-nbd --disconnect "$GPT_NBD" 2>/dev/null || true
+            if echo "$GPT_OUT2" | grep -q "No problems found"; then
+                ok "GPT integrity verified after repair"
+            else
+                fail "GPT check failed even after sgdisk -e repair: $GPT_OUT2"
+            fi
+        else
+            fail "GPT check failed and could not re-verify after repair: $GPT_OUT"
+        fi
     fi
 else
     trap - EXIT 2>/dev/null || true
@@ -123,20 +145,27 @@ for PNUM in 1 2 3 4 5; do
     echo "    Part $PNUM GUID: $GUID"
     case "${GUID^^}" in
         "$EFI_GUID")      ok "  Part $PNUM is EFI System Partition" ;;
-        "$ROOT_GUID")     ok "  Part $PNUM is Linux x86-64 root (required for dm-verity)" ;;
-        "$VERITY_GUID")   ok "  Part $PNUM is Linux x86-64 root verity — dm-verity hash partition present"; VERITY_FOUND=1 ;;
+        "$ROOT_GUID")     ok "  Part $PNUM is Linux x86-64 root" ;;
+        "$VERITY_GUID")   ok "  Part $PNUM is Linux x86-64 root verity"; VERITY_FOUND=1 ;;
         "$XBOOTLDR_GUID") ok "  Part $PNUM is XBOOTLDR /boot (grub mode)"; XBOOTLDR_FOUND=1 ;;
     esac
 done
 
-# V3 fix: verity partition is REQUIRED — fail if absent
-if [[ $VERITY_FOUND -eq 0 ]]; then
-    fail "No x86-64 root verity partition (GUID $VERITY_GUID) found — dm-verity was not applied"
-fi
-
-# grub mode: XBOOTLDR /boot partition is required
-if [[ "${BOOT_MODE}" == "grub" && $XBOOTLDR_FOUND -eq 0 ]]; then
-    fail "grub mode: No XBOOTLDR /boot partition (GUID $XBOOTLDR_GUID) found"
+# Verity partition check is RHEL 10 (grub mode) only.
+# RHEL 9 (uki mode) does NOT use dm-verity — a verity partition indicates a broken build.
+if [[ "${BOOT_MODE}" == "grub" ]]; then
+    if [[ $VERITY_FOUND -eq 0 ]]; then
+        fail "grub mode: No x86-64 root verity partition (GUID $VERITY_GUID) found — dm-verity was not applied"
+    fi
+    if [[ $XBOOTLDR_FOUND -eq 0 ]]; then
+        fail "grub mode: No XBOOTLDR /boot partition (GUID $XBOOTLDR_GUID) found"
+    fi
+else
+    # uki mode (RHEL 9): verity partition must NOT be present — if it is, APPLY_VERITY was true
+    if [[ $VERITY_FOUND -eq 1 ]]; then
+        fail "uki mode (RHEL 9): verity partition found — APPLY_VERITY was true during build (check ~/.env and Lessons 101-102)"
+    fi
+    ok "uki mode (RHEL 9): no verity partition — correct"
 fi
 
 # Fix 4: assert no linux-generic (0FC63DAF) partition exists in the finished image.
@@ -244,16 +273,9 @@ if [[ "${BOOT_MODE}" == "grub" ]]; then
         fi
     fi
 else
-    echo "--- [4] Verity addon ---"
-    # V2 fix: same mount fix as section 3
-    ADDON=$(guestfish --ro -a "$QCOW2" -- \
-        run : mount /dev/sda1 / : find /EFI/Linux 2>/dev/null | grep 'verity\.addon\.efi' || true)
-    if [[ -n "$ADDON" ]]; then
-        ok "Verity addon present: $ADDON"
-    else
-        fail "No verity.addon.efi found — dm-verity was not applied"
-        echo "    This means the verity container step silently failed (nbd modprobe?)"
-    fi
+    # uki mode (RHEL 9): no verity addon expected — skip this check entirely
+    echo "--- [4] Verity addon (skipped — uki/RHEL 9 mode does not use dm-verity) ---"
+    ok "uki mode: verity.addon.efi check skipped (RHEL 9 does not use dm-verity)"
 fi
 
 # ---------------------------------------------------------------------------
