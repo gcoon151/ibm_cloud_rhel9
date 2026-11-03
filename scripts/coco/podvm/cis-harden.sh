@@ -157,9 +157,15 @@ if rpm -q systemd-journal-remote >/dev/null 2>&1; then
     # socket_systemd-journal-remote_disabled (code from 1ea9417/54fc52b, reverted with Lesson 94).
     # journal-upload needs URL= in /etc/systemd/journal-upload.conf to ship logs anywhere.
     systemctl unmask systemd-journal-upload.service 2>/dev/null || true
+    systemctl enable systemd-journal-upload.service 2>/dev/null || true
     mkdir -p /etc/systemd/system/multi-user.target.wants
     ln -sf /usr/lib/systemd/system/systemd-journal-upload.service \
         /etc/systemd/system/multi-user.target.wants/systemd-journal-upload.service
+    mkdir -p /etc/systemd
+    cat > /etc/systemd/journal-upload.conf << 'EOF'
+[Upload]
+URL=https://127.0.0.1:19532
+EOF
     systemctl mask systemd-journal-remote.socket 2>/dev/null || true
     DONE+=(journal-upload-enabled journal-remote-socket-masked)
 fi
