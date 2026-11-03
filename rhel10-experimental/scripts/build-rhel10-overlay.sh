@@ -343,6 +343,7 @@ export NVIDIA_DRIVER_VERSION=""
 export DEBUG_BUILD="${DEBUG_BUILD:-}"
 export BOOT_MODE="${BOOT_MODE}"
 export HARDENED="${HARDENED:-}"
+export APPLY_VERITY="${APPLY_VERITY:-true}"
 # ACTIVATION_KEY must be exported for create-verity-podvm.sh's inner build.
 export ACTIVATION_KEY ORG_ID
 
