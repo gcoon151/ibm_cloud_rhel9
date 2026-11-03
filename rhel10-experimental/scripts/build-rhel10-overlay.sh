@@ -561,7 +561,7 @@ else
         echo "${KA_CONF}" >&2
         exit 1
     fi
-    if echo "${KA_CONF}" | grep -q -- '/kata-containers\b'; then
+    if echo "${KA_CONF}" | grep -qE '(^|[[:space:]])/kata-containers\b'; then
         echo "ERROR: 10-override.conf contains stale /kata-containers reference:" >&2
         echo "${KA_CONF}" >&2
         exit 1
