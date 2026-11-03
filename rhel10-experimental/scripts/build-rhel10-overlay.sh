@@ -548,8 +548,27 @@ else
         exit 1
     fi
     echo "  ✓ create-scratch.sh in image contains '--pbkdf pbkdf2' (fast KDF confirmed)"
+
+    # Lesson 110: Assert kata-agent drop-in mounts to /run/kata-containers (NOT /kata-containers)
+    KA_CONF=$(guestfish --ro -a "${OUTPUT_QCOW2}" -m "${SCRATCH_CHECK_PART}" \
+        -- cat /etc/systemd/system/kata-agent.service.d/10-override.conf 2>/dev/null || true)
+    if [[ -z "${KA_CONF}" ]]; then
+        echo "ERROR: /etc/systemd/system/kata-agent.service.d/10-override.conf not found in image" >&2
+        exit 1
+    fi
+    if ! echo "${KA_CONF}" | grep -q -- 'mount /dev/mapper/scratch /run/kata-containers'; then
+        echo "ERROR: 10-override.conf does not mount scratch to /run/kata-containers:" >&2
+        echo "${KA_CONF}" >&2
+        exit 1
+    fi
+    if echo "${KA_CONF}" | grep -q -- '/kata-containers\b'; then
+        echo "ERROR: 10-override.conf contains stale /kata-containers reference:" >&2
+        echo "${KA_CONF}" >&2
+        exit 1
+    fi
+    echo "  ✓ kata-agent 10-override.conf verified (/run/kata-containers mount target)"
 fi
-echo "✓ create-scratch.sh optimisation verified"
+echo "✓ create-scratch.sh and kata-agent mount verified"
 
 # ---------------------------------------------------------------------------
 # STEP 5e: Assert Uptycs EDR was installed by install-uptycs.sh (virt-customize --run

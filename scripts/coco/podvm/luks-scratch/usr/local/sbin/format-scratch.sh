@@ -18,7 +18,7 @@
 set -euo pipefail
 
 LUKS_DEV="/dev/disk/by-partlabel/scratch"
-MOUNT_POINT="/kata-containers"
+MOUNT_POINT="/run/kata-containers"
 MAPPER_NAME="scratch"
 KEY_PATH=/run/lukspw.bin
 

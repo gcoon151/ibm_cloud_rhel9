@@ -180,14 +180,14 @@ echo "✓ scratch scripts are executable"
 # so systemd-repart can create the scratch partition — see HANDOFF.md Step 5.
 KA_OVERRIDE=/etc/systemd/system/kata-agent.service.d/10-override.conf
 if [[ -f "${KA_OVERRIDE}" ]]; then
-    # Lesson 55: make the mount idempotent (scratch may already be mounted by luks-scratch).
-    sed -i "s#^ExecStartPre=sh -c '\[ -b /dev/mapper/scratch \] \&\& mount /dev/mapper/scratch /kata-containers'#ExecStartPre=sh -c '[ -b /dev/mapper/scratch ] \&\& (mountpoint -q /kata-containers || mount /dev/mapper/scratch /kata-containers)'#" "${KA_OVERRIDE}"
-    if ! grep -q 'mountpoint -q /kata-containers' "${KA_OVERRIDE}"; then
+    # Lesson 55 & 110: mount scratch to /run/kata-containers idempotently (kata-agent unpacks layers under /run/kata-containers)
+    sed -i "s#^ExecStartPre=.*#ExecStartPre=sh -c 'mkdir -p /run/kata-containers \&\& [ -b /dev/mapper/scratch ] \&\& (mountpoint -q /run/kata-containers || mount /dev/mapper/scratch /run/kata-containers)'#" "${KA_OVERRIDE}"
+    if ! grep -q 'mountpoint -q /run/kata-containers' "${KA_OVERRIDE}"; then
         echo "ERROR: idempotent mount edit did not apply to ${KA_OVERRIDE}:" >&2
         cat "${KA_OVERRIDE}" >&2
         exit 1
     fi
-    echo "✓ kata-agent ExecStartPre made idempotent (mountpoint -q || mount)"
+    echo "✓ kata-agent ExecStartPre made idempotent (/run/kata-containers)"
 else
     echo "ERROR: ${KA_OVERRIDE} not found — luks-config.tar.gz did not extract it" >&2
     echo "       Without this file kata-agent will run without encrypted scratch (silent RAM overlay)." >&2
@@ -404,7 +404,7 @@ After=luks-scratch.service
 Requires=luks-scratch.service
 
 [Service]
-ExecStartPre=sh -c '[ -b /dev/mapper/scratch ] && mount /dev/mapper/scratch /kata-containers'
+ExecStartPre=sh -c 'mkdir -p /run/kata-containers && [ -b /dev/mapper/scratch ] && (mountpoint -q /run/kata-containers || mount /dev/mapper/scratch /run/kata-containers)'
 Restart=on-failure
 RestartSec=5s
 Environment=RUST_LOG=debug
