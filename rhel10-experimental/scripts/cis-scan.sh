@@ -91,6 +91,26 @@ done
 [[ -n "$SSH_USER" ]] || { echo "ERROR: no ssh within 600s (cloud-init seed not honoured?). Console tail:" >&2; tail -c 600 "$WORK/console.log" >&2; exit 1; }
 echo "  ssh up as $SSH_USER"
 SUDO=""; [[ "$SSH_USER" != "root" ]] && SUDO="sudo"
+echo "--- 3b. runtime smoke: scratch must back /run/kata-containers (Lesson 111) ---"
+# Static gates cannot see mount topology; only a boot can. /run/kata-containers is a bind mount of /kata-containers
+# (base-image run-kata\x2dcontainers.mount). If scratch is not mounted, image-rs overlay mounts fail with
+# "not supported as upperdir" and every guest image pull dies as "Failed to create bundle". Fail here, before any upload.
+SMOKE_OUT=""
+for i in $(seq 1 12); do
+    SMOKE_OUT=$(rsh "findmnt -no SOURCE /run/kata-containers 2>/dev/null" 2>/dev/null || true)
+    [[ "$SMOKE_OUT" == *"/dev/mapper/scratch"* ]] && break
+    sleep 5
+done
+if [[ "$SMOKE_OUT" != *"/dev/mapper/scratch"* ]]; then
+    echo "ERROR: /run/kata-containers is NOT backed by /dev/mapper/scratch (findmnt SOURCE='${SMOKE_OUT}'). Image cannot pull containers." >&2
+    echo "       Check kata-agent.service.d/10-override.conf ExecStartPre guard (must test /proc/mounts, not 'mountpoint -q')." >&2
+    exit 1
+fi
+OVL_TEST='d=/run/kata-containers/image/overlay/smoke; '"$SUDO"' mkdir -p $d/u $d/w $d/l $d/m && '"$SUDO"' mount -t overlay overlay -o lowerdir=$d/l,upperdir=$d/u,workdir=$d/w $d/m; rc=$?; '"$SUDO"' umount $d/m 2>/dev/null; '"$SUDO"' rm -rf $d; exit $rc'
+rsh "$OVL_TEST" >/dev/null 2>&1 || { echo "ERROR: overlay mount with upperdir under /run/kata-containers/image failed (image-rs would fail with 'Failed to create bundle')" >&2; exit 1; }
+echo "  ✓ /run/kata-containers source: ${SMOKE_OUT}; overlay upperdir mount OK"
+
+
 
 echo "--- 4. rhsm workaround + register + install openscap + scan (remote) ---"
 # Script and creds go over stdin only (not visible in ps, not written to disk on either side).
