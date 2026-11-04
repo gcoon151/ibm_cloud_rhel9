@@ -181,8 +181,8 @@ echo "✓ scratch scripts are executable"
 KA_OVERRIDE=/etc/systemd/system/kata-agent.service.d/10-override.conf
 if [[ -f "${KA_OVERRIDE}" ]]; then
     # Lesson 55 & 110: mount scratch to /run/kata-containers idempotently (kata-agent unpacks layers under /run/kata-containers)
-    sed -i "s#^ExecStartPre=.*#ExecStartPre=sh -c 'mkdir -p /run/kata-containers \&\& [ -b /dev/mapper/scratch ] \&\& (mountpoint -q /run/kata-containers || mount /dev/mapper/scratch /run/kata-containers)'#" "${KA_OVERRIDE}"
-    if ! grep -q 'mountpoint -q /run/kata-containers' "${KA_OVERRIDE}"; then
+    sed -i "s#^ExecStartPre=.*#ExecStartPre=sh -c 'mkdir -p /run/kata-containers \&\& [ -b /dev/mapper/scratch ] \&\& (grep -q \"^/dev/mapper/scratch /run/kata-containers \" /proc/mounts || mount /dev/mapper/scratch /run/kata-containers)'#" "${KA_OVERRIDE}"
+    if ! grep -q '/proc/mounts || mount /dev/mapper/scratch /run/kata-containers' "${KA_OVERRIDE}"; then
         echo "ERROR: idempotent mount edit did not apply to ${KA_OVERRIDE}:" >&2
         cat "${KA_OVERRIDE}" >&2
         exit 1
@@ -404,7 +404,7 @@ After=luks-scratch.service
 Requires=luks-scratch.service
 
 [Service]
-ExecStartPre=sh -c 'mkdir -p /run/kata-containers && [ -b /dev/mapper/scratch ] && (mountpoint -q /run/kata-containers || mount /dev/mapper/scratch /run/kata-containers)'
+ExecStartPre=sh -c 'mkdir -p /run/kata-containers && [ -b /dev/mapper/scratch ] && (grep -q "^/dev/mapper/scratch /run/kata-containers " /proc/mounts || mount /dev/mapper/scratch /run/kata-containers)'
 Restart=on-failure
 RestartSec=5s
 Environment=RUST_LOG=debug

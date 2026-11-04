@@ -566,6 +566,19 @@ else
         echo "${KA_CONF}" >&2
         exit 1
     fi
+    # Lesson 111: the base image ships run-kata\x2dcontainers.mount (bind /kata-containers -> /run/kata-containers),
+    # so /run/kata-containers is ALWAYS a mountpoint. A `mountpoint -q` guard therefore skips the scratch mount and
+    # overlay upperdir lands on the root overlay ("not supported as upperdir"). Guard must test for scratch itself.
+    if echo "${KA_CONF}" | grep -q 'mountpoint -q'; then
+        echo "ERROR: 10-override.conf uses a 'mountpoint -q' guard (always true due to bind mount; Lesson 111):" >&2
+        echo "${KA_CONF}" >&2
+        exit 1
+    fi
+    if ! echo "${KA_CONF}" | grep -q '/proc/mounts'; then
+        echo "ERROR: 10-override.conf guard does not check /proc/mounts for the scratch device (Lesson 111):" >&2
+        echo "${KA_CONF}" >&2
+        exit 1
+    fi
     echo "  ✓ kata-agent 10-override.conf verified (/run/kata-containers mount target)"
 fi
 echo "✓ create-scratch.sh and kata-agent mount verified"
