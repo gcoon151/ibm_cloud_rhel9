@@ -549,7 +549,8 @@ else
     fi
     echo "  ✓ create-scratch.sh in image contains '--pbkdf pbkdf2' (fast KDF confirmed)"
 
-    # Lesson 110: Assert kata-agent drop-in mounts to /run/kata-containers (NOT /kata-containers)
+    # Lessons 110 (retracted) / 111: drop-in must mount scratch on /run/kata-containers using a /proc/mounts guard
+    # (NOT `mountpoint -q`: /run/kata-containers is always a bind mountpoint). Asserts below enforce this.
     KA_CONF=$(guestfish --ro -a "${OUTPUT_QCOW2}" -m "${SCRATCH_CHECK_PART}" \
         -- cat /etc/systemd/system/kata-agent.service.d/10-override.conf 2>/dev/null || true)
     if [[ -z "${KA_CONF}" ]]; then

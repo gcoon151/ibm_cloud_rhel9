@@ -180,7 +180,8 @@ echo "✓ scratch scripts are executable"
 # so systemd-repart can create the scratch partition — see HANDOFF.md Step 5.
 KA_OVERRIDE=/etc/systemd/system/kata-agent.service.d/10-override.conf
 if [[ -f "${KA_OVERRIDE}" ]]; then
-    # Lesson 55 & 110: mount scratch to /run/kata-containers idempotently (kata-agent unpacks layers under /run/kata-containers)
+    # Lesson 55 & 111: mount scratch on /run/kata-containers idempotently. The base image bind-mounts /kata-containers there, so
+    # /run/kata-containers is ALWAYS a mountpoint: guard on /proc/mounts showing the scratch device, never `mountpoint -q` (Lesson 111).
     sed -i "s#^ExecStartPre=.*#ExecStartPre=sh -c 'mkdir -p /run/kata-containers \&\& [ -b /dev/mapper/scratch ] \&\& (grep -q \"^/dev/mapper/scratch /run/kata-containers \" /proc/mounts || mount /dev/mapper/scratch /run/kata-containers)'#" "${KA_OVERRIDE}"
     if ! grep -q '/proc/mounts || mount /dev/mapper/scratch /run/kata-containers' "${KA_OVERRIDE}"; then
         echo "ERROR: idempotent mount edit did not apply to ${KA_OVERRIDE}:" >&2
