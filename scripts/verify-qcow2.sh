@@ -63,6 +63,19 @@ echo "================================================================="
 # available. If nbd is genuinely unavailable, print SKIP and count as FAIL —
 # a skipped check must never count as passed.
 echo ""
+echo "--- [0] Virtual size is a whole GiB (RHEL 10 / grub mode; Lesson 121) ---"
+if [[ "${BOOT_MODE}" == "grub" ]]; then
+    VSIZE_BYTES=$(qemu-img info --output json "$QCOW2" | python3 -c 'import sys,json;print(json.load(sys.stdin)["virtual-size"])')
+    if (( VSIZE_BYTES % 1073741824 == 0 )); then
+        ok "virtual size $VSIZE_BYTES bytes = $(( VSIZE_BYTES / 1073741824 )) GiB (whole GiB: no tail gap on IBM Cloud)"
+    else
+        fail "virtual size $VSIZE_BYTES is not a whole GiB; IBM Cloud rounds up and the odd remainder becomes a tail gap that repart picks for scratch (Lesson 121)"
+    fi
+else
+    echo "  (skipped: not grub mode)"
+fi
+
+echo ""
 echo "--- [1] GPT integrity ---"
 GPT_NBD=/dev/nbd0
 GPT_SKIP=0

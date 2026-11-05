@@ -48,7 +48,12 @@ cleanup() {
 trap cleanup EXIT
 
 echo "--- 1. overlay + cloud-init seed ---"
-qemu-img create -q -f qcow2 -F qcow2 -b "$(readlink -f "$IMG")" "$WORK/overlay.qcow2"
+# Overlay is sized UP to whole GiB, like IBM Cloud presents the boot volume (Lesson 121). Booting at the
+# image's own odd virtual size hides the tail-gap bug (scratch 8 GiB locally, 34 MiB in the cloud).
+VSIZE=$(qemu-img info --output json "$IMG" | python3 -c 'import sys,json;print(json.load(sys.stdin)["virtual-size"])')
+OVL_SIZE=$(( (VSIZE + 1073741823) / 1073741824 ))G
+qemu-img create -q -f qcow2 -F qcow2 -b "$(readlink -f "$IMG")" "$WORK/overlay.qcow2" "$OVL_SIZE"
+echo "  overlay virtual size: $OVL_SIZE (image: $VSIZE bytes)"
 cp /usr/share/OVMF/OVMF_VARS_4M.fd "$WORK/vars.fd"
 cat > "$WORK/user-data" <<EOF
 #cloud-config
@@ -109,6 +114,14 @@ fi
 OVL_TEST='d=/run/kata-containers/image/overlay/smoke; '"$SUDO"' mkdir -p $d/u $d/w $d/l $d/m && '"$SUDO"' mount -t overlay overlay -o lowerdir=$d/l,upperdir=$d/u,workdir=$d/w $d/m; rc=$?; '"$SUDO"' umount $d/m 2>/dev/null; '"$SUDO"' rm -rf $d; exit $rc'
 rsh "$OVL_TEST" >/dev/null 2>&1 || { echo "ERROR: overlay mount with upperdir under /run/kata-containers/image failed (image-rs would fail with 'Failed to create bundle')" >&2; exit 1; }
 echo "  ✓ /run/kata-containers source: ${SMOKE_OUT}; overlay upperdir mount OK"
+# Lesson 121: size gate. Mount topology passed on a 16 MB scratch before; require >= 2 GiB.
+SCRATCH_BYTES=$(rsh "$SUDO blockdev --getsize64 /dev/mapper/scratch" 2>/dev/null | tr -dc 0-9)
+if [[ -z "$SCRATCH_BYTES" || "$SCRATCH_BYTES" -lt 2147483648 ]]; then
+    echo "ERROR: scratch is ${SCRATCH_BYTES:-unknown} bytes (< 2 GiB) on a ${OVL_SIZE} disk. Repart chose a tail gap? (Lesson 121)" >&2
+    rsh "lsblk -b -o NAME,SIZE,LABEL" >&2 || true
+    exit 1
+fi
+echo "  ✓ scratch size: $(( SCRATCH_BYTES / 1048576 )) MiB (>= 2048 MiB)"
 
 
 

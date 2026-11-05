@@ -302,6 +302,12 @@ function shrink_root_to_fit()
     (( verity_max_space < VERITY_MIN_MB * MB )) && verity_max_space=$(( VERITY_MIN_MB * MB ))
     # + 2 MiB: partition alignment and the GPT backup header.
     target_disk_size=$(( root_end + verity_max_space + LUKS_MINIMAL_SPACE_MB * MB + 2 * MB ))
+    # IBM MOD (Lesson 121): round UP to a whole GiB. IBM Cloud presents the boot volume rounded up
+    # to whole GiB; any odd remainder (e.g. 34 MiB) becomes a SECOND free area behind the verity
+    # partition, and systemd-repart's best-fit put the whole scratch there (34 MiB scratch).
+    # Rounding here makes the image the same size the cloud presents; create-scratch.sh also sets
+    # SizeMinBytes so a small tail can never be chosen.
+    target_disk_size=$(( (target_disk_size + 1024 * MB - 1) / (1024 * MB) * (1024 * MB) ))
     root_min_line="SizeMinBytes=${root_size_bytes}"
     export root_size_bytes verity_max_space target_disk_size root_min_line
     echo "Root partition: $(( root_size_bytes / MB )) MiB; verity: $(( verity_max_space / MB )) MiB; scratch reserve: ${LUKS_MINIMAL_SPACE_MB} MiB; disk target: $(( target_disk_size / MB )) MiB"

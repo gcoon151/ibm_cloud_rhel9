@@ -39,9 +39,14 @@ echo "[luks-scratch] Random key generated in $KEY_PATH"
 # repart conf intentionally does NOT include Encrypt= or Format= —
 # those are handled below with optimised flags that repart doesn't support.
 # ---------------------------------------------------------------------------
+# IBM MOD (Lesson 121): SizeMinBytes=2G is a FLOOR, not a cap (do not confuse with the reverted
+# SizeMaxBytes=256M of O-1/Lesson 109 - there is still no upper bound, scratch takes the whole
+# free area). Without a floor repart's best-fit picked a 34 MiB tail gap instead of the 8 GiB gap.
+# If no free area >= 2 GiB exists repart now fails, so this script (set -e) fails loudly.
 echo "[Partition]
 Type=linux-generic
-Label=scratch" > $WORKDIR/scratch.conf
+Label=scratch
+SizeMinBytes=2G" > $WORKDIR/scratch.conf
 
 out=$(SYSTEMD_LOG_LEVEL=debug systemd-repart --dry-run=no --definitions=$WORKDIR --no-pager --json=pretty)
 
