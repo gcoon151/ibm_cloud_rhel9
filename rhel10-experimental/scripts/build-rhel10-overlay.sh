@@ -25,11 +25,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Load .env
+# Load .env. A variable the caller set explicitly on the command line wins over .env: the host .env has
+# SSHD_SERVICE=true, which silently overrode SSHD_SERVICE=false and shipped sshd in every "hardened" image.
+_CALLER_SSHD_SET="${SSHD_SERVICE+set}"; _CALLER_SSHD="${SSHD_SERVICE:-}"
 if [[ -f "${REPO_ROOT}/.env" ]]; then
     set -a; source "${REPO_ROOT}/.env"; set +a
     echo "✓ Loaded .env"
 fi
+if [[ "${_CALLER_SSHD_SET}" == "set" ]]; then SSHD_SERVICE="${_CALLER_SSHD}"; fi
 
 # Args
 BASE_QCOW2="${1:-}"
