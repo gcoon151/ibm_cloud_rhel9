@@ -55,12 +55,18 @@ OVL_SIZE=$(( (VSIZE + 1073741823) / 1073741824 ))G
 qemu-img create -q -f qcow2 -F qcow2 -b "$(readlink -f "$IMG")" "$WORK/overlay.qcow2" "$OVL_SIZE"
 echo "  overlay virtual size: $OVL_SIZE (image: $VSIZE bytes)"
 cp /usr/share/OVMF/OVMF_VARS_4M.fd "$WORK/vars.fd"
+# runcmd: hardened images are built with sshd MASKED (SSHD_SERVICE=false). The scan needs ssh, so unmask and
+# start sshd here, in the throw-away overlay only. The image file is never modified, so the scan covers the
+# shipped image plus sshd unmasked. A no-op when sshd is not masked.
 cat > "$WORK/user-data" <<EOF
 #cloud-config
 disable_root: false
 ssh_pwauth: false
 ssh_authorized_keys:
   - $(cat "$KEY.pub")
+runcmd:
+  - [ systemctl, unmask, sshd.service ]
+  - [ systemctl, enable, --now, sshd.service ]
 EOF
 printf 'instance-id: cis-scan\nlocal-hostname: cis-scan\n' > "$WORK/meta-data"
 cloud-localds "$WORK/seed.iso" "$WORK/user-data" "$WORK/meta-data"

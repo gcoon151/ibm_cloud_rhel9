@@ -22,6 +22,7 @@ set -euo pipefail
 # --payload-tag TAG             expected payload tag string to find in manifest (optional)
 # ---------------------------------------------------------------------------
 QCOW2=""
+REQUIRE_SSHD_MASKED="false"
 MIN_BINARY_DATE="2026-07-24"
 EXPECTED_PAYLOAD_TAG=""
 BOOT_MODE="uki"   # override with --boot-mode grub for grub-chain images
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
         --min-binary-date) MIN_BINARY_DATE="$2"; shift 2 ;;
         --payload-tag)     EXPECTED_PAYLOAD_TAG="$2"; shift 2 ;;
         --boot-mode)       BOOT_MODE="$2"; shift 2 ;;
+        --require-sshd-masked) REQUIRE_SSHD_MASKED="true"; shift ;;
         -*)  echo "Unknown option: $1" >&2; exit 1 ;;
         *)   QCOW2="$1"; shift ;;
     esac
@@ -345,13 +347,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5b. SSH daemon check — warn if sshd is absent/masked (debug images need it)
+# 5b. SSH daemon check — warn if sshd is absent/masked (debug images need it).
+#     With --require-sshd-masked (hardened builds) the logic is inverted: sshd.service
+#     MUST be a symlink to /dev/null and nothing may enable sshd.service / sshd.socket.
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- [5b] SSH daemon ---"
 SSHD_BIN=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- ls /usr/sbin/ 2>/dev/null | grep "^sshd$" || true)
 SSHD_MASKED=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- readlink /etc/systemd/system/sshd.service 2>/dev/null || true)
-if [[ -z "$SSHD_BIN" ]]; then
+if [[ "$REQUIRE_SSHD_MASKED" == "true" ]]; then
+    SSHD_WANTS=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- sh 'ls /etc/systemd/system/*.wants/sshd.service /etc/systemd/system/*.wants/sshd.socket 2>/dev/null' 2>/dev/null || true)
+    if echo "$SSHD_MASKED" | grep -q "/dev/null"; then
+        ok "sshd.service is MASKED (-> /dev/null): SSH disabled as required for a hardened image"
+    else
+        fail "sshd.service is NOT masked (readlink='${SSHD_MASKED}') — hardened images must have SSH disabled and masked (build with SSHD_SERVICE=false)"
+    fi
+    if [[ -n "$SSHD_WANTS" ]]; then
+        fail "sshd is still enabled via: ${SSHD_WANTS}"
+    else
+        ok "no *.wants/sshd.service or sshd.socket enablement symlinks"
+    fi
+elif [[ -z "$SSHD_BIN" ]]; then
     warn "sshd NOT installed — SSH into the VM will not work"
 elif echo "$SSHD_MASKED" | grep -q "/dev/null"; then
     warn "sshd is MASKED — SSH into the VM will not work (hardened image)"

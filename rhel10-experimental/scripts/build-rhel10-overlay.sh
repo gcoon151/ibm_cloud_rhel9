@@ -41,6 +41,13 @@ fi
 # Defaults
 PAYLOAD_TAG="${PAYLOAD_TAG:-1.13.1}"
 SSHD_SERVICE="${SSHD_SERVICE:-true}"
+# A hardened image must have SSH disabled and masked. podvm_maker.sh only masks sshd when
+# SSHD_SERVICE=false, so refuse a hardened build that would silently ship a running sshd
+# (rhel10-hardened-2026110619 was built that way).
+if [[ -n "${HARDENED:-}" && "${SSHD_SERVICE}" != "false" ]]; then
+    echo "ERROR: HARDENED=${HARDENED} requires SSHD_SERVICE=false (SSH disabled and masked); got SSHD_SERVICE=${SSHD_SERVICE}" >&2
+    exit 1
+fi
 OUTPUT_PREFIX="${OUTPUT_PREFIX:-$([[ -n "${HARDENED:-}" ]] && echo rhel10-hardened || echo rhel10)}"
 BOOT_MODE="${BOOT_MODE:-grub}"
 DATE=$(date -u +%Y%m%d%H)
@@ -369,7 +376,9 @@ VERIFY_SCRIPT="${REPO_ROOT}/scripts/verify-qcow2.sh"
 if [[ ! -f "${VERIFY_SCRIPT}" ]]; then
     echo "ERROR: verify-qcow2.sh not found at ${VERIFY_SCRIPT}" >&2; exit 1
 fi
-bash "${VERIFY_SCRIPT}" "${OUTPUT_QCOW2}" --boot-mode "${BOOT_MODE}"
+VERIFY_EXTRA=()
+if [[ -n "${HARDENED:-}" ]]; then VERIFY_EXTRA+=(--require-sshd-masked); fi
+bash "${VERIFY_SCRIPT}" "${OUTPUT_QCOW2}" --boot-mode "${BOOT_MODE}" ${VERIFY_EXTRA[@]+"${VERIFY_EXTRA[@]}"}
 
 # ---------------------------------------------------------------------------
 # STEP 5b: Assert CDH binary version matches the expected payload
