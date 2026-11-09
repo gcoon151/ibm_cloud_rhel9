@@ -375,6 +375,21 @@ else
     ok "sshd installed and not masked"
 fi
 
+# 5c. Direct root SSH must be refused by sshd itself (pen-test #170). Checked on every image, hardened or not:
+#     the vendor-data of IBM Cloud VPC re-enables root key login via cloud-init, so only the sshd drop-in holds.
+echo ""
+echo "--- [5c] sshd PermitRootLogin no ---"
+NOROOT_CONF=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- cat /etc/ssh/sshd_config.d/01-no-root-login.conf 2>/dev/null || true)
+if echo "$NOROOT_CONF" | grep -qx 'PermitRootLogin no'; then
+    ok "/etc/ssh/sshd_config.d/01-no-root-login.conf has 'PermitRootLogin no'"
+else
+    fail "no 'PermitRootLogin no' drop-in (/etc/ssh/sshd_config.d/01-no-root-login.conf) — root SSH would be allowed (pen-test #170)"
+fi
+NOROOT_OVERRIDE=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- sh 'grep -rHiE "^[[:space:]]*PermitRootLogin[[:space:]]+(yes|without-password|prohibit-password|forced-commands-only)" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null' 2>/dev/null || true)
+if [[ -n "$NOROOT_OVERRIDE" ]]; then
+    fail "another file sets PermitRootLogin to a permissive value: ${NOROOT_OVERRIDE}"
+fi
+
 # ---------------------------------------------------------------------------
 # 6. Version manifest + payload assertions
 # ---------------------------------------------------------------------------

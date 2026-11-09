@@ -281,6 +281,20 @@ if ! systemctl enable /etc/systemd/system/luks-scratch.service; then
 fi
 echo "✓ luks-scratch.service enabled"
 
+# IBM MOD (pen-test #170): refuse direct root SSH login. The IBM Cloud VPC platform's vendor-data sets
+# `disable_root: false` and injects the instance key into /root/.ssh/authorized_keys, overriding the image's
+# cloud.cfg `disable_root: true`, so cloud-init cannot be relied on; sshd must enforce it. Debug access is
+# vpcuser (cloud-init default user, NOPASSWD sudo). Drop-in sorts before 50-*.conf; first value wins in sshd.
+# Installed on every build (harmless when sshd is masked) so the policy never depends on SSHD_SERVICE.
+mkdir -p /etc/ssh/sshd_config.d
+printf '# IBM pen-test #170: no direct root SSH login; use vpcuser + sudo\nPermitRootLogin no\n' > /etc/ssh/sshd_config.d/01-no-root-login.conf
+chmod 0600 /etc/ssh/sshd_config.d/01-no-root-login.conf
+if ! grep -qx 'PermitRootLogin no' /etc/ssh/sshd_config.d/01-no-root-login.conf; then
+    echo "ERROR: /etc/ssh/sshd_config.d/01-no-root-login.conf was not written" >&2
+    exit 1
+fi
+echo "✓ sshd drop-in 01-no-root-login.conf installed (PermitRootLogin no)"
+
 # Configure SSH service based on SSHD_SERVICE environment variable.
 # Default is enabled (true); set to 'false' to produce a hardened image.
 # virt-customize --run scripts get a clean guest env, so SSHD_SERVICE only arrives via
