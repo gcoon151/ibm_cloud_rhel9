@@ -437,6 +437,52 @@ else
     warn "Nessus services not fully installed/enabled in image (disk: bin=$NESSUS_BIN unit=$NESSUS_UNIT wants=$NESSUS_WANTS | agent: bin=$NESSUS_AGT_BIN unit=$NESSUS_AGT_UNIT wants=$NESSUS_AGT_WANTS)"
 fi
 
+# 5e. Tenable CIS RHEL 10 v1.0.1 fixes (2026-11-19, docs/TENABLE_CIS_AUDIT_FINDINGS_2026-11-19.md). Hardened images only
+#     (they carry /etc/podvm-cis-hardened, written by cis-harden.sh). One guestfish call collects every fact.
+#     Each check repeats what the Tenable audit reads, so a pass here means "the same file/command output is right".
+echo ""
+echo "--- [5e] Tenable CIS fixes (hardened images) ---"
+CIS_FACTS=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- sh '
+echo "marker=$(tr "\n" " " < /etc/podvm-cis-hardened 2>/dev/null)"
+echo "fstab_tmp=$(grep -Ec "^[^#]+[[:space:]]+/tmp[[:space:]]" /etc/fstab)"
+echo "minlen=$(grep -iE "^[[:space:]]*minlen[[:space:]]*=" /etc/security/pwquality.conf | tr -d " ")"
+echo "profile_umask=$(grep -lE "^[[:space:]]*umask[[:space:]]+0?27" /etc/profile.d/*.sh 2>/dev/null | tr "\n" " ")"
+echo "pass_max=$(grep -E "^PASS_MAX_DAYS[[:space:]]" /etc/login.defs | tr -s " \t" " ")"
+echo "root_bin=$(test -d /root/bin && echo y || echo n) root_localbin=$(test -d /root/.local/bin && echo y || echo n)"
+echo "usr_local_sbin=$(stat -c %a /usr/local/sbin)"
+echo "cron_yearly=$(stat -c "%a %U:%G" /etc/cron.yearly 2>/dev/null || echo missing)"
+echo "fw_rules=$(grep -c "destination not address" /etc/firewalld/zones/trusted.xml 2>/dev/null || echo 0)"
+echo "nosha1_pmod=$(test -f /etc/crypto-policies/policies/modules/NO-SHA1.pmod && echo y || echo n)"
+echo "sha1_left=$(awk -F= "(\$1~/(hash|sign)/ && \$2~/SHA1/ && \$2!~/^[ ]*-[ ]*([^#]+)?SHA1/){print}" /etc/crypto-policies/state/CURRENT.pol 2>/dev/null | wc -l)"
+echo "varlog_open=$(find /var/log -type f ! -name "lastlog*" ! -name "wtmp*" ! -name "btmp*" ! -name README -perm /0137 | tr "\n" " ")"
+echo "tmpfiles_rhsm=$(test -f /etc/tmpfiles.d/cis-varlog.conf && echo y || echo n)"
+' 2>/dev/null || true)
+cisfact() { echo "$CIS_FACTS" | sed -n "s/^$1=//p" | head -1; }
+CIS_MARKER=$(cisfact marker)
+if [[ -z "$CIS_MARKER" ]]; then
+    ok "not a CIS-hardened image (no /etc/podvm-cis-hardened): Tenable CIS fixes not asserted"
+else
+    CIS_LEVEL_N=$(echo "$CIS_MARKER" | sed -n 's/^level-\([0-9]\).*/\1/p')
+    cischk() { # <label> <condition true?> <detail>
+        if [[ "$2" == "1" ]]; then ok "$1"; else fail "$1 -- $3"; fi
+    }
+    cischk "#13 /etc/cron.yearly exists, 700 root:root" "$([[ $(cisfact cron_yearly) == "700 root:root" ]] && echo 1)" "got '$(cisfact cron_yearly)'"
+    cischk "#6 /etc/profile.d/*.sh sets umask 027" "$([[ -n $(cisfact profile_umask) ]] && echo 1)" "no profile.d file with umask 027"
+    cischk "#9 /root/bin and /root/.local/bin are directories" "$([[ $(cisfact root_bin) == "y root_localbin=y" ]] && echo 1)" "got '$(cisfact root_bin)'"
+    cischk "#9 /usr/local/sbin mode <= 755" "$([[ $(cisfact usr_local_sbin) == "755" || $(cisfact usr_local_sbin) == "750" || $(cisfact usr_local_sbin) == "700" ]] && echo 1)" "got $(cisfact usr_local_sbin)"
+    cischk "#3 no /var/log file more open than 0640 (wtmp/btmp/lastlog 0664)" "$([[ -z $(cisfact varlog_open | tr -d ' ') ]] && echo 1)" "open: $(cisfact varlog_open)"
+    cischk "#3 tmpfiles.d rule keeps /var/log/rhsm logs 0640 at run time" "$([[ $(cisfact tmpfiles_rhsm) == y ]] && echo 1)" "missing /etc/tmpfiles.d/cis-varlog.conf"
+    if [[ "${CIS_LEVEL_N:-0}" -ge 2 ]]; then
+        cischk "#4 pwquality minlen >= 15" "$([[ $(cisfact minlen) =~ ^minlen=(1[5-9]|[2-9][0-9])$ ]] && echo 1)" "got '$(cisfact minlen)'"
+        cischk "#7 PASS_MAX_DAYS <= 90" "$([[ $(cisfact pass_max) =~ ^PASS_MAX_DAYS\ ([1-9]|[1-8][0-9]|90)$ ]] && echo 1)" "got '$(cisfact pass_max)'"
+        cischk "#15 NO-SHA1.pmod present and no SHA1 left in CURRENT.pol (Tenable awk)" "$([[ $(cisfact nosha1_pmod) == y && $(cisfact sha1_left) == 0 ]] && echo 1)" "pmod=$(cisfact nosha1_pmod) lines_with_sha1=$(cisfact sha1_left)"
+    fi
+    if [[ "${CIS_LEVEL_N:-0}" -ge 3 ]]; then
+        cischk "#1 /etc/fstab has a /tmp line" "$([[ $(cisfact fstab_tmp) -ge 1 ]] && echo 1)" "no /tmp line"
+        cischk "#10 firewalld trusted zone has 2 loopback anti-spoof rich rules" "$([[ $(cisfact fw_rules) -ge 2 ]] && echo 1)" "found $(cisfact fw_rules)"
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # 6. Version manifest + payload assertions
 # ---------------------------------------------------------------------------

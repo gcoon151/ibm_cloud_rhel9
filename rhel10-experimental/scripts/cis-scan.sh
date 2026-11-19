@@ -131,6 +131,14 @@ echo "  ✓ scratch size: $(( SCRATCH_BYTES / 1048576 )) MiB (>= 2048 MiB)"
 
 
 
+# Optional: Tenable-equivalent checks + runtime regression checks (cis-tenable-check.sh), piped over stdin.
+if [[ "${CIS_TENABLE:-0}" == "1" ]]; then
+    echo "--- 3c. Tenable-equivalent + runtime regression checks ---"
+    rsh "$SUDO bash -s" < "${REPO_ROOT}/rhel10-experimental/scripts/cis-tenable-check.sh" > "$OUT/tenable-eq.txt" 2>&1 || true
+    grep -aE '^(FAIL|INFO|TENABLE_EQ)' "$OUT/tenable-eq.txt" || { echo "ERROR: tenable-eq.txt has no result lines" >&2; tail -5 "$OUT/tenable-eq.txt" >&2; exit 17; }
+    if [[ "${CIS_SKIP_OSCAP:-0}" == "1" ]]; then echo "✓ CIS_SKIP_OSCAP=1: skipping OpenSCAP; results in $OUT/tenable-eq.txt"; exit 0; fi
+fi
+
 echo "--- 4. rhsm workaround + register + install openscap + scan (remote) ---"
 # Script and creds go over stdin only (not visible in ps, not written to disk on either side).
 {

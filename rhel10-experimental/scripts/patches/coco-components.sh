@@ -142,3 +142,12 @@ virt-customize --memsize 8192 \
     -a $INPUT_IMAGE
 
 [[ ${#SM_REGISTER[@]} -gt 0 ]] && virt-customize --memsize 8192 --run-command "subscription-manager unregister" -a $INPUT_IMAGE || true
+
+# IBM MOD (2026-11-19, Tenable CIS 6.2.4.1): `subscription-manager unregister` above (and the register before it) writes
+# /var/log/rhsm/*.log and dnf logs AFTER cis-harden.sh ran, as 0644. Re-apply the same /var/log modes as the last write to the image.
+# Same exclusions as cis-harden.sh (wtmp/btmp/lastlog keep 0664 as the CIS audit allows). Hardened builds only.
+if [[ -n "${HARDENED:-}" && "${HARDENED}" != "0" ]]; then
+    virt-customize --memsize 8192 -a $INPUT_IMAGE \
+        --run-command "find /var/log -type f ! -name 'lastlog*' ! -name 'wtmp*' ! -name 'btmp*' ! -name README -exec chmod u-x,g-wx,o-rwx {} +" \
+        --run-command "test -z \"\$(find /var/log -type f ! -name 'lastlog*' ! -name 'wtmp*' ! -name 'btmp*' ! -name README -perm /0137)\""
+fi

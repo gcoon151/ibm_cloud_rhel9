@@ -16,7 +16,17 @@
 set -euo pipefail
 LEVEL=$(cat /tmp/cis-level 2>/dev/null || echo 1); rm -f /tmp/cis-level
 case "$LEVEL" in 1|2|3|4) ;; *) echo "ERROR: bad CIS level '$LEVEL'" >&2; exit 1;; esac
-echo "cis-harden.sh level=$LEVEL"
+# Tenable-driven fixes (2026-11-19) are grouped in BATCHES so a regression can be pinned to one group.
+# /tmp/cis-batches = "all" (default, what every real build uses), "none" (old behaviour), or a comma list of:
+#   cfg  = #4 minlen 15, #6 profile.d umask, #7 PASS_MAX_DAYS 90, #9 root PATH dirs + /usr/local/sbin 0755, #13 cron.yearly
+#   logs = #3 /var/log file modes (+ tmpfiles.d for runtime-created rhsm logs)
+#   tmp  = #1 /tmp line in /etc/fstab
+#   fw   = #10 firewalld loopback anti-spoof rich rules
+#   sha1 = #15 NO-SHA1 crypto sub-policy
+# Only cis-dev-loop.sh / cis-scan.sh set anything other than "all".
+BATCHES=$(cat /tmp/cis-batches 2>/dev/null || echo all); rm -f /tmp/cis-batches
+want() { [ "$BATCHES" = all ] && return 0; case ",$BATCHES," in *",$1,"*) return 0;; *) return 1;; esac; }
+echo "cis-harden.sh level=$LEVEL batches=$BATCHES"
 
 BANNER='Authorized users only. All activity may be monitored and reported.'
 DONE=()
@@ -96,7 +106,9 @@ EOF
 DONE+=(sysctl)
 
 # --- 6. cron / at access and permissions
-for d in /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.monthly /etc/cron.weekly; do
+# batch cfg (#13, CIS 2.4.1.7): cronie ships no /etc/cron.yearly, the audit wants it present, root:root, no group/other access.
+want cfg && install -d -m 700 -o root -g root /etc/cron.yearly
+for d in /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.monthly /etc/cron.weekly /etc/cron.yearly; do
     [ -d "$d" ] && chmod 700 "$d"
 done
 [ -f /etc/crontab ] && chmod 600 /etc/crontab
@@ -111,6 +123,12 @@ grep -qE '^UMASK[[:space:]]+027' /etc/login.defs
 for f in /etc/bashrc /etc/profile; do
     grep -q "^[^#]*\bumask" "$f" && sed -i -E "s/^([^#]*\bumask)[[:space:]]+[[:digit:]]+/\1 027/g" "$f" || echo "umask 027" >> "$f"
 done
+# batch cfg (#6, CIS 5.4.3.3): the audit wants an explicit umask 027 in a /etc/profile.d/*.sh file as well as login.defs.
+if want cfg; then
+    printf '# CIS 5.4.3.3: default user umask\numask 027\n' > /etc/profile.d/60-default_umask.sh
+    chmod 644 /etc/profile.d/60-default_umask.sh
+    grep -Eq '^[[:space:]]*umask[[:space:]]+0?27' /etc/profile.d/60-default_umask.sh
+fi
 rm -f /etc/profile.d/cis-tmout.sh
 printf '# CIS: idle timeout\ntypeset -xr TMOUT=900\n' > /etc/profile.d/tmout.sh
 chmod 644 /etc/profile.d/tmout.sh
@@ -181,8 +199,20 @@ DONE+=(root-locked-password)
 
 # --- password aging on existing accounts (accounts_password_set_max_life_existing)
 # login.defs PASS_MAX_DAYS only affects new accounts; chage sets it for existing ones.
-awk -F: '/^[^:]+:[^!*]/ && ($5 > 365 || $5 == "") {print $1}' /etc/shadow | xargs -r -I{} chage -M 365 {}
+# batch cfg (#7, CIS 5.4.1.1): Tenable wants <= 90 (SSG accepts <= 365, so 90 satisfies both).
+MAXDAYS=365; want cfg && MAXDAYS=90
+awk -F: -v max="$MAXDAYS" '/^[^:]+:[^!*]/ && ($5 > max || $5 == "") {print $1}' /etc/shadow | xargs -r -I{} chage -M "$MAXDAYS" {}
+# A hash set at build time has no last-change date; with a max age that would expire the password at once (CIS text warns).
+want cfg && chage -d "$(date +%Y-%m-%d)" root
 DONE+=(password-aging-existing)
+
+# batch cfg (#9, CIS 5.4.2.5 root path integrity): every dir in root's PATH must exist, be a directory, root-owned, mode <= 0755.
+# podvm_maker.sh creates /usr/local/sbin as 0775; /root/bin and /root/.local/bin are on root's PATH but do not exist.
+if want cfg; then
+    install -d -m 700 -o root -g root /root/bin /root/.local /root/.local/bin
+    chmod go-w /usr/local/sbin /usr/local/bin
+    DONE+=(root-path-dirs)
+fi
 
 find -P /boot/grub2/ -maxdepth 1 -perm /u+xs,g+xwrs,o+xwrt -type f -exec chmod u-xs,g-xwrs,o-xwrt {} \;
 for h in $(awk -F: '$3>=1000 && $7!="/sbin/nologin" {print $6}' /etc/passwd); do
@@ -207,7 +237,7 @@ if [ "$LEVEL" -ge 2 ]; then
     authselect select custom/hardening with-faillock with-pwhistory without-nullok --force >/dev/null
     authselect check >/dev/null
     cat > /etc/security/pwquality.conf <<'EOF'
-minlen = 14
+minlen = 15
 minclass = 4
 dictcheck = 1
 difok = 2
@@ -239,8 +269,9 @@ EOF
     rm -f /tmp/cis-sshd-test-key /tmp/cis-sshd-test-key.pub
     DONE+=(sshd-access)
 
-    # --- password aging defaults
-    sed -i -E 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 365/' /etc/login.defs
+    # --- password aging defaults (batch cfg: 90 for Tenable CIS 5.4.1.1; MAXDAYS set in tier 1)
+    sed -i -E "s/^PASS_MAX_DAYS.*/PASS_MAX_DAYS ${MAXDAYS}/" /etc/login.defs
+    grep -qE "^PASS_MAX_DAYS[[:space:]]+${MAXDAYS}\$" /etc/login.defs
     useradd -D -f 45
     DONE+=(aging)
 
@@ -251,7 +282,21 @@ EOF
     printf 'cipher@SSH = -3DES-CBC -AES-128-CBC -AES-192-CBC -AES-256-CBC\n' > /etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod
     printf 'mac@SSH = -HMAC-MD5* -UMAC-64* -UMAC-128* -HMAC-SHA1*\n' > /etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod
     printf 'mac = -*-128*\n' > /etc/crypto-policies/policies/modules/NO-WEAKMAC.pmod
-    update-crypto-policies --no-reload --set DEFAULT:NO-SSHCBC:NO-SSHWEAKCIPHERS:NO-SSHWEAKMACS:NO-WEAKMAC >/dev/null
+    POLICY=DEFAULT:NO-SSHCBC:NO-SSHWEAKCIPHERS:NO-SSHWEAKMACS:NO-WEAKMAC
+    # batch sha1 (#15, CIS 1.6.2): DEFAULT already has sha1_in_certs=0 but still lists SHA1 in hash@nss-pkcs12-import and
+    # hash@nss-smime. The module text is the one given in the CIS remediation (filename must be upper case).
+    if want sha1; then
+        printf '# CIS 1.6.2: drop SHA1 hash and signature support\nhash = -SHA1\nsign = -*-SHA1\nsha1_in_certs = 0\n' \
+            > /etc/crypto-policies/policies/modules/NO-SHA1.pmod
+        POLICY="${POLICY}:NO-SHA1"
+    fi
+    update-crypto-policies --no-reload --set "$POLICY" >/dev/null
+    if want sha1; then
+        # exact awk from the Tenable audit; it must print nothing but "none"
+        SHA1_LEFT=$(awk -F= '($1~/(hash|sign)/ && $2~/SHA1/ && $2!~/^\s*\-\s*([^#\n\r]+)?SHA1/){print}' /etc/crypto-policies/state/CURRENT.pol)
+        [ -z "$SHA1_LEFT" ] || { echo "ERROR: SHA1 still enabled in CURRENT.pol: $SHA1_LEFT" >&2; exit 1; }
+        DONE+=(crypto-no-sha1)
+    fi
     DONE+=(crypto-policy)
 fi
 
@@ -261,6 +306,14 @@ if [ "$LEVEL" -ge 3 ]; then
     grep -q '^tmpfs /dev/shm ' /etc/fstab || echo 'tmpfs /dev/shm tmpfs defaults,nodev,nosuid,noexec 0 0' >> /etc/fstab
     mkdir -p /etc/systemd/system/tmp.mount.d
     printf '[Mount]\nOptions=mode=1777,strictatime,nosuid,nodev,noexec\n' > /etc/systemd/system/tmp.mount.d/cis.conf
+    # batch tmp (#1, CIS 1.1.2.1.1): the audit reads /etc/fstab for a /tmp line; the tmp.mount drop-in alone is not enough.
+    # Options are identical to the drop-in above (plus size=2G, the value in the CIS example).
+    if want tmp; then
+        grep -Eq '^[^#]+[[:space:]]+/tmp[[:space:]]' /etc/fstab || \
+            echo 'tmpfs /tmp tmpfs defaults,rw,nosuid,nodev,noexec,relatime,size=2G 0 0' >> /etc/fstab
+        grep -Eq '^[^#]+[[:space:]]+/tmp[[:space:]]' /etc/fstab
+        DONE+=(tmp-fstab)
+    fi
     systemctl enable tmp.mount >/dev/null 2>&1
     [ -L /etc/systemd/system/local-fs.target.wants/tmp.mount ] || { echo "ERROR: tmp.mount not enabled" >&2; exit 1; }
     DONE+=(tmp-shm-mounts)
@@ -292,6 +345,15 @@ if [ "$LEVEL" -ge 3 ]; then
     rpm -q firewalld >/dev/null
     systemctl enable firewalld >/dev/null 2>&1
     firewall-offline-cmd --zone=trusted --add-interface=lo >/dev/null
+    # batch fw (#10, CIS 4.1.6): drop packets that claim a loopback source but are not addressed to loopback.
+    # Traffic between local services (CDH/AA on 127.0.0.1, agent-protocol-forwarder) has destination 127.0.0.1 and is not matched.
+    if want fw; then
+        firewall-offline-cmd --zone=trusted --add-rich-rule='rule family=ipv4 source address="127.0.0.1" destination not address="127.0.0.1" drop' >/dev/null
+        firewall-offline-cmd --zone=trusted --add-rich-rule='rule family=ipv6 source address="::1" destination not address="::1" drop' >/dev/null
+        firewall-offline-cmd --zone=trusted --list-rich-rules | grep -q 'source address="127.0.0.1"'
+        firewall-offline-cmd --zone=trusted --list-rich-rules | grep -q 'source address="::1"'
+        DONE+=(fw-loopback-spoof)
+    fi
     firewall-offline-cmd --zone=public --list-ports | grep -qw '15150/tcp' || { echo "ERROR: 15150/tcp not open in firewalld" >&2; exit 1; }
     DONE+=(firewalld)
 fi
@@ -314,6 +376,25 @@ net.ipv6.conf.all.forwarding = 0
 net.ipv6.conf.default.forwarding = 0
 EOF
     DONE+=(sysctl-net)
+fi
+
+# --- batch logs (#3, CIS 6.2.4.1): LAST step, so it also covers logs written by the dnf/uptycs/podvm_maker steps above.
+# Allowed maximum is 0640 (wtmp/btmp/lastlog 0664). coco-components.sh repeats this after `subscription-manager unregister`.
+# Files that are created at RUN time (rhsm logs) are covered by tmpfiles.d, because a build-time chmod cannot reach them.
+if want logs; then
+    find /var/log -type f ! -name 'lastlog*' ! -name 'wtmp*' ! -name 'btmp*' ! -name README \
+        -exec chmod u-x,g-wx,o-rwx {} +
+    mkdir -p /etc/tmpfiles.d
+    printf '%s\n' \
+        'd /var/log/rhsm 0755 root root -' \
+        'f /var/log/rhsm/rhsm.log 0640 root root -' \
+        'f /var/log/rhsm/rhsmcertd.log 0640 root root -' \
+        'z /var/log/rhsm/*.log 0640 root root -' \
+        > /etc/tmpfiles.d/cis-varlog.conf
+    chmod 644 /etc/tmpfiles.d/cis-varlog.conf
+    BAD=$(find /var/log -type f ! -name 'lastlog*' ! -name 'wtmp*' ! -name 'btmp*' ! -name README -perm /0137)
+    [ -z "$BAD" ] || { echo "ERROR: /var/log files still too open: $BAD" >&2; exit 1; }
+    DONE+=(varlog-modes)
 fi
 
 # --- marker (host-side verify checks this)

@@ -37,6 +37,7 @@ rc=0
 virt-customize --memsize 4096 --no-selinux-relabel -a "$DEV" \
     --run-command "subscription-manager register --org=${ORG_ID} --activationkey=${ACTIVATION_KEY} >/dev/null" \
     --run-command "echo ${CIS_LEVEL:-1} > /tmp/cis-level" \
+    --run-command "echo ${CIS_BATCHES:-all} > /tmp/cis-batches" \
     --run "${REPO_ROOT}/scripts/coco/podvm/cis-harden.sh" \
     --run-command "systemctl mask selinux-autorelabel.service selinux-autorelabel-mark.service" \
     --run-command "restorecon -R /etc /usr/lib /var/lib 2>/dev/null || true" \
