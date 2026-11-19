@@ -196,6 +196,31 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Step 3b: Remove obsolete RHSM tmpfs mounts and tune cloud-init
+# ---------------------------------------------------------------------------
+# Root filesystem is a volatile overlay, so /etc/rhsm, /var/lib/rhsm, and /var/log/rhsm
+# are already writable. Obsolete tmpfs mounts in fstab mask pre-installed rhsm.conf and
+# CA certs, causing IBM Cloud vendor-data (RedHatActivationScript) to fail and VSI to
+# report 'status: failed' (cannot_start_compute).
+echo ""
+echo "=== [3b/6] Removing RHSM tmpfs mounts & tuning cloud-init ==="
+if [ -f /etc/fstab ]; then
+    sed -i '/rhsm/d' /etc/fstab
+    echo "✓ Cleaned /etc/fstab (removed RHSM tmpfs entries)"
+fi
+
+mkdir -p /etc/cloud/cloud.cfg.d
+cat > /etc/cloud/cloud.cfg.d/90-podvm.cfg << 'EOF'
+growpart:
+  mode: 'off'
+resize_rootfs: false
+system_info:
+  network:
+    renderers: ['network-manager']
+EOF
+echo "✓ Installed /etc/cloud/cloud.cfg.d/90-podvm.cfg"
+
+# ---------------------------------------------------------------------------
 # Step 4: SELinux context fixes + firewall
 # ---------------------------------------------------------------------------
 # apply_selinux_label writes the fcontext rule (semanage) and runs restorecon.
@@ -375,6 +400,40 @@ cat <<'EOF' > /etc/systemd/system/process-user-data.service.d/10-override.conf
 ExecStartPre=-/bin/mount -t iso9660 -o ro /dev/disk/by-label/cidata /media/cidata
 EOF
 echo "✓ process-user-data override installed (no-vTPM: tpm2_pcrextend removed)"
+
+# ---------------------------------------------------------------------------
+# Nessus /opt instance disk preparation service (idle unless INITDATA nessus=true)
+# ---------------------------------------------------------------------------
+if [ -f /tmp/podvm-nessus-disk ]; then
+    cp /tmp/podvm-nessus-disk /usr/local/bin/podvm-nessus-disk
+    chmod 0755 /usr/local/bin/podvm-nessus-disk
+    chown root:root /usr/local/bin/podvm-nessus-disk
+fi
+
+if [ -f /tmp/podvm-nessus-disk.service ]; then
+    cp /tmp/podvm-nessus-disk.service /etc/systemd/system/podvm-nessus-disk.service
+    chmod 0644 /etc/systemd/system/podvm-nessus-disk.service
+    chown root:root /etc/systemd/system/podvm-nessus-disk.service
+    systemctl enable podvm-nessus-disk.service || ln -sf ../podvm-nessus-disk.service /etc/systemd/system/multi-user.target.wants/podvm-nessus-disk.service
+    echo "✓ podvm-nessus-disk.service installed and enabled"
+fi
+
+# ---------------------------------------------------------------------------
+# Nessus agent installer & linking service (idle unless INITDATA nessus=true)
+# ---------------------------------------------------------------------------
+if [ -f /tmp/podvm-nessus-agent ]; then
+    cp /tmp/podvm-nessus-agent /usr/local/bin/podvm-nessus-agent
+    chmod 0755 /usr/local/bin/podvm-nessus-agent
+    chown root:root /usr/local/bin/podvm-nessus-agent
+fi
+
+if [ -f /tmp/podvm-nessus-agent.service ]; then
+    cp /tmp/podvm-nessus-agent.service /etc/systemd/system/podvm-nessus-agent.service
+    chmod 0644 /etc/systemd/system/podvm-nessus-agent.service
+    chown root:root /etc/systemd/system/podvm-nessus-agent.service
+    systemctl enable podvm-nessus-agent.service || ln -sf ../podvm-nessus-agent.service /etc/systemd/system/multi-user.target.wants/podvm-nessus-agent.service
+    echo "✓ podvm-nessus-agent.service installed and enabled"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 6: Install Uptycs EDR agent

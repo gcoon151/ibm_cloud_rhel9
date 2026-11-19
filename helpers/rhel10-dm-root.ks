@@ -139,17 +139,7 @@ kernel-modules-extra
 sfdisk --part-type /dev/sda 1 C12A7328-F81F-11D2-BA4B-00A0C93EC93B
 sfdisk --part-type /dev/sda 2 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 
-# RHSM writable paths — all tmpfs (deviation #14 removed; #15 disables vendor-data).
-# Peer-pod VMs are ephemeral; RHSM state does not persist across pods.
-cat >> /etc/fstab << 'EOF'
-
-# RHSM writable paths — all tmpfs (vendor-data disabled, no subscription-manager at boot)
-tmpfs /var/lib/rhsm tmpfs defaults,size=32m,mode=0755 0 0
-tmpfs /etc/rhsm     tmpfs defaults,size=32m,mode=0755 0 0
-tmpfs /var/log/rhsm tmpfs defaults,size=16m,mode=0755 0 0
-EOF
-
-# Create the mountpoint directories.
+# RHSM directories
 mkdir -p /var/lib/rhsm /etc/rhsm /var/log/rhsm
 
 # Speed up kernel-install by disabling grub and dracut hooks (UKI replaces them).

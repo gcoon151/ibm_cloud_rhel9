@@ -83,16 +83,7 @@ ROOTDEV=$(findmnt -no SOURCE /)
 PARTNUM=$(cat /sys/class/block/$(basename $ROOTDEV)/partition)
 sfdisk --part-type /dev/sda $PARTNUM 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
 
-# RHSM writable paths — all tmpfs
-cat >> /etc/fstab << 'EOF'
-
-# RHSM writable paths — all tmpfs (vendor-data disabled, no subscription-manager at boot)
-tmpfs /var/lib/rhsm tmpfs defaults,size=32m,mode=0755 0 0
-tmpfs /etc/rhsm     tmpfs defaults,size=32m,mode=0755 0 0
-tmpfs /var/log/rhsm tmpfs defaults,size=16m,mode=0755 0 0
-EOF
-
-# Create the mountpoint directories.
+# RHSM directories
 mkdir -p /var/lib/rhsm /etc/rhsm /var/log/rhsm
 
 # GRUB hardening and configuration

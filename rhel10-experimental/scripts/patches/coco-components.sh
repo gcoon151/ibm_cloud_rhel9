@@ -101,14 +101,28 @@ done
 
 # IBM MOD: HARDENED=1 -> CIS safe-tier hardening (scripts/coco/podvm/cis-harden.sh), run before verity.
 HARDEN_ARGS=()
-if [[ -n "${HARDENED:-}" ]]; then
+if [[ -n "${HARDENED:-}" && "${HARDENED}" != "0" ]]; then
     [[ "${HARDENED}" =~ ^[1-4]$ ]] || { echo "ERROR: HARDENED must be 1-4 (CIS tier), got '${HARDENED}'" >&2; exit 1; }
     [[ -s "$ARTIFACTS_FOLDER/cis-harden.sh" ]] || { echo "ERROR: HARDENED=1 but $ARTIFACTS_FOLDER/cis-harden.sh missing" >&2; exit 1; }
     HARDEN_ARGS=(--run-command "echo ${HARDENED} > /tmp/cis-level" --run "$ARTIFACTS_FOLDER/cis-harden.sh")
 fi
 
+# IBM MOD (2026-11-18): the dnf kernel update runs kernel-install -> dracut inside the virt-customize
+# appliance, which builds a HOST-ONLY initramfs (ext4 only, no overlay.ko). The image boots with
+# systemd.volatile=overlay, so systemd-volatile-root then fails in the initrd -> emergency mode
+# (proven on rhel10-2026111814: new initramfs had no kernel/fs/overlayfs). Write the dracut config
+# BEFORE dnf so the new kernel's initramfs is generic + has overlay, then regenerate explicitly.
+DRACUT_CONF="printf 'hostonly=\"no\"\nadd_drivers+=\" overlay \"\n' > /etc/dracut.conf.d/91-podvm-generic.conf"
+UPDATE_CMD=()
+if [[ ${#SM_REGISTER[@]} -gt 0 ]]; then
+    UPDATE_CMD=(--run-command "$DRACUT_CONF" \
+                --run-command "dnf versionlock clear 2>/dev/null || true; dnf -y update --setopt=install_weak_deps=False --nobest && dnf -y remove --oldinstallonly 2>/dev/null || true; dnf clean all" \
+                --run-command "dracut -f --regenerate-all")
+fi
+
 virt-customize --memsize 8192 \
     "${SM_REGISTER[@]}" \
+    ${UPDATE_CMD[@]+"${UPDATE_CMD[@]}"} \
     --run-command "printf 'BOOT_MODE=%s\nSSHD_SERVICE=%s\n' '${BOOT_MODE:-grub}' '${SSHD_SERVICE:-true}' > /etc/podvm-build-env" \
     --run $ARTIFACTS_FOLDER/script-disk-mods.sh \
     --copy-in $ARTIFACTS_FOLDER/podvm-binaries.tar.gz:/tmp/ \
@@ -117,6 +131,10 @@ virt-customize --memsize 8192 \
     --copy-in $ARTIFACTS_FOLDER/uptycs-complete.tar.gz:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/provision-uptycs.sh:/tmp/ \
     --copy-in $ARTIFACTS_FOLDER/uptycs-osquery.service:/tmp/ \
+    --copy-in $ARTIFACTS_FOLDER/podvm-nessus-disk:/tmp/ \
+    --copy-in $ARTIFACTS_FOLDER/podvm-nessus-disk.service:/tmp/ \
+    --copy-in $ARTIFACTS_FOLDER/podvm-nessus-agent:/tmp/ \
+    --copy-in $ARTIFACTS_FOLDER/podvm-nessus-agent.service:/tmp/ \
     --run $ARTIFACTS_FOLDER/podvm_maker.sh \
     --run $ARTIFACTS_FOLDER/install-uptycs.sh \
     "${HARDEN_ARGS[@]}" \

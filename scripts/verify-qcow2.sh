@@ -297,6 +297,35 @@ if [[ "${BOOT_MODE}" == "grub" ]]; then
             else
                 fail "BLS entry options missing root=/dev/mapper/root"
             fi
+            # Initramfs must contain overlay.ko when systemd.volatile=overlay is on the cmdline.
+            # A host-only initramfs (dnf kernel update inside virt-customize) lacks it -> boot drops
+            # to emergency mode at systemd-volatile-root (rhel10-2026111814, 2026-11-18).
+            if echo "$BLS_OPTIONS" | grep -q 'systemd\.volatile=overlay'; then
+                INITRD_NAME=$(guestfish --ro -a "$QCOW2" -- \
+                    run : mount "$BOOT_PART" / : cat "${BLS_ENTRY_PATH}" 2>/dev/null | awk '/^initrd /{print $2}' | head -1 | xargs -r basename || true)
+                INITRD_TMP=$(mktemp /tmp/verify-initrd-XXXXXX)
+                if [[ -n "$INITRD_NAME" ]] && guestfish --ro -a "$QCOW2" -- \
+                        run : mount "$BOOT_PART" / : download "/${INITRD_NAME}" "$INITRD_TMP" 2>/dev/null \
+                        && [[ -s "$INITRD_TMP" ]]; then
+                    # capture the listing first: 'grep -q' closing the pipe early + pipefail = false negative
+                    # dracut may write a multi-segment initramfs (early cpio + compressed main); zcat cannot read that.
+                    if command -v 3cpio >/dev/null 2>&1; then
+                        INITRD_LIST=$(3cpio -t "$INITRD_TMP" 2>/dev/null || true)
+                    elif command -v lsinitrd >/dev/null 2>&1; then
+                        INITRD_LIST=$(lsinitrd "$INITRD_TMP" 2>/dev/null || true)
+                    else
+                        INITRD_LIST=$(zcat "$INITRD_TMP" 2>/dev/null | cpio -t 2>/dev/null || true)
+                    fi
+                    if grep -q 'kernel/fs/overlayfs/overlay\.ko' <<<"$INITRD_LIST"; then
+                        ok "Initramfs $INITRD_NAME contains overlay.ko (systemd.volatile=overlay can mount)"
+                    else
+                        fail "Initramfs $INITRD_NAME has NO overlay.ko but cmdline has systemd.volatile=overlay — image will drop to emergency mode"
+                    fi
+                else
+                    fail "Cannot extract initramfs '${INITRD_NAME}' from /boot to check overlay.ko"
+                fi
+                rm -f "$INITRD_TMP"
+            fi
         fi
     fi
 else
@@ -388,6 +417,24 @@ fi
 NOROOT_OVERRIDE=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- sh 'grep -rHiE "^[[:space:]]*PermitRootLogin[[:space:]]+(yes|without-password|prohibit-password|forced-commands-only)" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null' 2>/dev/null || true)
 if [[ -n "$NOROOT_OVERRIDE" ]]; then
     fail "another file sets PermitRootLogin to a permissive value: ${NOROOT_OVERRIDE}"
+fi
+
+# 5d. Nessus /opt instance disk & agent services (idle unless INITDATA nessus=true)
+echo ""
+echo "--- [5d] Nessus /opt disk and agent services ---"
+NESSUS_BIN=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- is-file /usr/local/bin/podvm-nessus-disk 2>/dev/null || echo false)
+NESSUS_UNIT=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- is-file /etc/systemd/system/podvm-nessus-disk.service 2>/dev/null || echo false)
+NESSUS_WANTS=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- is-symlink /etc/systemd/system/multi-user.target.wants/podvm-nessus-disk.service 2>/dev/null || echo false)
+
+NESSUS_AGT_BIN=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- is-file /usr/local/bin/podvm-nessus-agent 2>/dev/null || echo false)
+NESSUS_AGT_UNIT=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- is-file /etc/systemd/system/podvm-nessus-agent.service 2>/dev/null || echo false)
+NESSUS_AGT_WANTS=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- is-symlink /etc/systemd/system/multi-user.target.wants/podvm-nessus-agent.service 2>/dev/null || echo false)
+
+if [[ "$NESSUS_BIN" == "true" && "$NESSUS_UNIT" == "true" && "$NESSUS_WANTS" == "true" && \
+      "$NESSUS_AGT_BIN" == "true" && "$NESSUS_AGT_UNIT" == "true" && "$NESSUS_AGT_WANTS" == "true" ]]; then
+    ok "podvm-nessus-disk & podvm-nessus-agent binaries and services installed and enabled"
+else
+    warn "Nessus services not fully installed/enabled in image (disk: bin=$NESSUS_BIN unit=$NESSUS_UNIT wants=$NESSUS_WANTS | agent: bin=$NESSUS_AGT_BIN unit=$NESSUS_AGT_UNIT wants=$NESSUS_AGT_WANTS)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -482,6 +529,59 @@ except: print('')
         fi
     fi
 fi
+
+# ---------------------------------------------------------------------------
+# 7. BOOT GATE — actually boot the image in QEMU (secure-boot OVMF + KVM, snapshot=on)
+#    Added 2026-11-18 after rhel10-2026111814 / hardened-2026111815 were uploaded to IBM Cloud
+#    with every offline gate green but dropped to emergency mode at boot (initramfs had no
+#    overlay.ko). Offline file checks cannot prove an image boots. There is NO skip switch:
+#    missing qemu/firmware/KVM is a FAIL, never a warning.
+#    PASS = reaches a 'login:' prompt with no emergency mode / kernel panic / initrd failure.
+#    agent-protocol-forwarder failing is EXPECTED here (no peer-pod user-data) and is ignored.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- [7] Boot gate: QEMU boot of the image (snapshot, no network) ---"
+OVMF_CODE_SB=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+OVMF_VARS_SRC=/usr/share/OVMF/OVMF_VARS_4M.ms.fd
+BOOT_MISSING=""
+command -v qemu-system-x86_64 >/dev/null 2>&1 || BOOT_MISSING+=" qemu-system-x86_64"
+[[ -r "$OVMF_CODE_SB" ]] || BOOT_MISSING+=" $OVMF_CODE_SB"
+[[ -r "$OVMF_VARS_SRC" ]] || BOOT_MISSING+=" $OVMF_VARS_SRC"
+[[ -w /dev/kvm ]] || BOOT_MISSING+=" /dev/kvm(writable)"
+if [[ -n "$BOOT_MISSING" ]]; then
+    fail "Boot gate cannot run, missing:${BOOT_MISSING}. Fix the host; do NOT upload an unbooted image."
+else
+    BOOT_DIR=$(mktemp -d /tmp/verify-boot-XXXXXX)
+    BOOT_LOG="$BOOT_DIR/serial.log"; : > "$BOOT_LOG"
+    cp "$OVMF_VARS_SRC" "$BOOT_DIR/vars.fd"
+    timeout 240 qemu-system-x86_64 -machine q35,smm=on,accel=kvm -cpu host -m 3072 -smp 2 \
+        -global driver=cfi.pflash01,property=secure,value=on \
+        -drive if=pflash,format=raw,unit=0,file="$OVMF_CODE_SB",readonly=on \
+        -drive if=pflash,format=raw,unit=1,file="$BOOT_DIR/vars.fd" \
+        -drive file="$QCOW2",if=virtio,format=qcow2,snapshot=on \
+        -nic none -display none -no-reboot -monitor none -serial file:"$BOOT_LOG" \
+        > "$BOOT_DIR/qemu.log" 2>&1 &
+    QPID=$!
+    BOOT_RESULT="timeout"
+    for _ in $(seq 1 120); do
+        sleep 2
+        if grep -a -qE 'Entering emergency mode|Reached target .*Emergency|end Kernel panic|Kernel panic - not syncing|dracut-emergency|Failed to start systemd-volatile-root|Dependency failed for initrd-root-fs' "$BOOT_LOG"; then
+            BOOT_RESULT="bad"; break
+        fi
+        if grep -a -qE '^[A-Za-z0-9._-]+ login: ' "$BOOT_LOG"; then
+            BOOT_RESULT="login"; break
+        fi
+        kill -0 "$QPID" 2>/dev/null || { BOOT_RESULT="qemu-exited"; break; }
+    done
+    kill "$QPID" 2>/dev/null || true; wait "$QPID" 2>/dev/null || true
+    case "$BOOT_RESULT" in
+        login) ok "Image boots to a login prompt in QEMU (no emergency mode, no panic)" ;;
+        bad)   fail "Image BOOT FAILED in QEMU: $(grep -a -E 'emergency mode|Kernel panic|volatile-root|Dependency failed' "$BOOT_LOG" | head -3 | tr '\n' '|' | cut -c1-300) — serial log kept: $BOOT_LOG"; BOOT_KEEP=1 ;;
+        *)     fail "Image did not reach a login prompt in QEMU (result: $BOOT_RESULT) — serial log kept: $BOOT_LOG"; BOOT_KEEP=1 ;;
+    esac
+    [[ "${BOOT_KEEP:-0}" == "1" ]] || rm -rf "$BOOT_DIR"
+fi
+
 
 # ---------------------------------------------------------------------------
 # Summary

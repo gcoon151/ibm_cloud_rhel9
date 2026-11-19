@@ -47,11 +47,11 @@ SSHD_SERVICE="${SSHD_SERVICE:-true}"
 # A hardened image must have SSH disabled and masked. podvm_maker.sh only masks sshd when
 # SSHD_SERVICE=false, so refuse a hardened build that would silently ship a running sshd
 # (rhel10-hardened-2026110619 was built that way).
-if [[ -n "${HARDENED:-}" && "${SSHD_SERVICE}" != "false" ]]; then
+if [[ "${HARDENED:-0}" != "0" && -n "${HARDENED:-}" && "${SSHD_SERVICE}" != "false" ]]; then
     echo "ERROR: HARDENED=${HARDENED} requires SSHD_SERVICE=false (SSH disabled and masked); got SSHD_SERVICE=${SSHD_SERVICE}" >&2
     exit 1
 fi
-OUTPUT_PREFIX="${OUTPUT_PREFIX:-$([[ -n "${HARDENED:-}" ]] && echo rhel10-hardened || echo rhel10)}"
+OUTPUT_PREFIX="${OUTPUT_PREFIX:-$([[ -n "${HARDENED:-}" && "${HARDENED:-0}" != "0" ]] && echo rhel10-hardened || echo rhel10)}"
 BOOT_MODE="${BOOT_MODE:-grub}"
 DATE=$(date -u +%Y%m%d%H)
 # Overlay output goes alongside the base in /var/lib/libvirt/images/rhel10/
@@ -261,6 +261,17 @@ cp "${REPO_ROOT}/services/uptycs-osquery.service"        "${COCO_SCRIPTS_DIR}/sc
 chmod 0755 "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/install-uptycs.sh" \
            "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/provision-uptycs.sh"
 echo "✓ Uptycs staged: $(basename "${UPTYCS_TARBALL_SRC}")"
+# get-artifacts.sh with pull retry
+cp "${REPO_ROOT}/scripts/coco/podvm/get-artifacts.sh"    "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+chmod 0755 "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/get-artifacts.sh"
+# Nessus /opt instance disk and agent services (idle unless INITDATA nessus=true)
+cp "${REPO_ROOT}/scripts/coco/podvm/podvm-nessus-disk"         "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+cp "${REPO_ROOT}/scripts/coco/podvm/podvm-nessus-disk.service" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+cp "${REPO_ROOT}/scripts/coco/podvm/podvm-nessus-agent"        "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+cp "${REPO_ROOT}/scripts/coco/podvm/podvm-nessus-agent.service" "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/"
+chmod 0755 "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/podvm-nessus-disk" \
+           "${COCO_SCRIPTS_DIR}/scripts/coco/podvm/podvm-nessus-agent"
+echo "✓ Nessus disk preparation and agent services staged"
 # example_run.sh — adds -v /boot:/boot:ro and -v /dev:/dev (fixes supermin kernel lookup on Ubuntu)
 cp "${REPO_ROOT}/scripts/coco/podvm/example_run.sh"      "${COCO_SCRIPTS_DIR}/"
 # IBM patches to upstream coco-podvm-scripts files — tracked in repo, applied on top of
@@ -380,8 +391,20 @@ if [[ ! -f "${VERIFY_SCRIPT}" ]]; then
     echo "ERROR: verify-qcow2.sh not found at ${VERIFY_SCRIPT}" >&2; exit 1
 fi
 VERIFY_EXTRA=()
-if [[ -n "${HARDENED:-}" ]]; then VERIFY_EXTRA+=(--require-sshd-masked); fi
-bash "${VERIFY_SCRIPT}" "${OUTPUT_QCOW2}" --boot-mode "${BOOT_MODE}" ${VERIFY_EXTRA[@]+"${VERIFY_EXTRA[@]}"}
+if [[ -n "${HARDENED:-}" && "${HARDENED:-0}" != "0" ]]; then VERIFY_EXTRA+=(--require-sshd-masked); fi
+VERIFY_LOG="$(mktemp "${TMPDIR:-/tmp}/verify-qcow2-XXXXXX.log")"
+# pipefail (set above) makes a failing verify abort the build even through tee.
+bash "${VERIFY_SCRIPT}" "${OUTPUT_QCOW2}" --boot-mode "${BOOT_MODE}" ${VERIFY_EXTRA[@]+"${VERIFY_EXTRA[@]}"} 2>&1 | tee "${VERIFY_LOG}"
+# IBM MOD (2026-11-18): assert the QEMU boot gate [7] really ran and passed. rhel10-2026111814 passed every
+# offline gate, then dropped to emergency mode in IBM Cloud (initramfs had no overlay.ko). A verify script that
+# skipped, or an older verify-qcow2.sh without the gate, must fail the build here, not slip through.
+if ! grep -q 'Image boots to a login prompt in QEMU' "${VERIFY_LOG}"; then
+    echo "ERROR: verify-qcow2.sh did not report a passing QEMU boot gate ('Image boots to a login prompt in QEMU')." >&2
+    echo "       The image was NOT booted. Do not upload. Log: ${VERIFY_LOG}" >&2
+    exit 1
+fi
+echo "  ✓ Boot gate asserted: image reached a login prompt in QEMU"
+rm -f "${VERIFY_LOG}"
 
 # ---------------------------------------------------------------------------
 # STEP 5b: Assert CDH binary version matches the expected payload
@@ -634,9 +657,36 @@ fi
 echo "✓ Uptycs EDR installed and enabled"
 
 # ---------------------------------------------------------------------------
+# STEP 5e2: Assert Nessus /opt disk service is installed and enabled in image
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Step 5e2: Verifying Nessus /opt disk service in image ---"
+ND_FAIL=0
+while read -r kind path; do
+    res=$(guestfish --ro -a "${OUTPUT_QCOW2}" -m "${SCRATCH_CHECK_PART}" -- "${kind}" "${path}" 2>/dev/null || echo false)
+    if [[ "${res}" == "true" ]]; then
+        echo "  ✓ ${kind} ${path}"
+    else
+        echo "  ✗ ${kind} ${path}" >&2; ND_FAIL=1
+    fi
+done <<'CHECKS'
+is-file /usr/local/bin/podvm-nessus-disk
+is-file /etc/systemd/system/podvm-nessus-disk.service
+is-symlink /etc/systemd/system/multi-user.target.wants/podvm-nessus-disk.service
+is-file /usr/local/bin/podvm-nessus-agent
+is-file /etc/systemd/system/podvm-nessus-agent.service
+is-symlink /etc/systemd/system/multi-user.target.wants/podvm-nessus-agent.service
+CHECKS
+if [[ "${ND_FAIL}" -ne 0 ]]; then
+    echo "ERROR: Nessus services (disk or agent) not correctly installed in ${OUTPUT_QCOW2}" >&2
+    exit 1
+fi
+echo "✓ Nessus disk and agent services installed and enabled"
+
+# ---------------------------------------------------------------------------
 # STEP 5f: HARDENED=1 only — assert cis-harden.sh ran and fwupd is gone (host-side, on the QCOW2)
 # ---------------------------------------------------------------------------
-if [[ -n "${HARDENED:-}" ]]; then
+if [[ -n "${HARDENED:-}" && "${HARDENED:-0}" != "0" ]]; then
     echo ""
     echo "--- Step 5f: Verifying CIS hardening in image ---"
     HF=0

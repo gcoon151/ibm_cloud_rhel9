@@ -32,9 +32,10 @@ function download_and_extract()
 {
     IMG=$1
     IMG_PATH=$2
-    podman pull $IMG
+    podman pull --retry 5 --retry-delay 5s $IMG
     cid=$(podman create $IMG)
     podman cp "$cid":$IMG_PATH $DEST_PATH
+    podman rm "$cid" >/dev/null 2>&1 || true
 }
 
 function error_exit() {
