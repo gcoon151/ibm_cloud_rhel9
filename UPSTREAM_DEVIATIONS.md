@@ -3,6 +3,7 @@
 Upstream reference: `https://github.com/confidential-devhub/coco-podvm-scripts`
 Local clone: `coco-podvm-scripts/` (workspace) and `~/gits/coco-podvm-scripts/` (build host)
 Last audited against upstream: 2026-10-13 (this file is the audit)
+**Exception: section O (`luks-scratch`) has a wrong baseline** (cites CAA, true parent is RH `coco-podvm-scripts`). Not re-audited as of 2026-11-16. See DES1 in "Deviation Exit Strategy" at the bottom of this file.
 
 **Rule**: Every entry here must reflect a real, current difference between our copy and
 upstream. If upstream already does the same thing, it must NOT be listed here. If upstream
@@ -48,11 +49,11 @@ IBM modifications to upstream files live in:
 | L | `verity.sh` | Hard assertion: verity partition visible after systemd-repart | Upstream only checks RH != "TBD"; doesn't verify partition is visible | Corrupt image with no verity hash, verity fails at boot |
 | M | `verity.sh` | `inject_grub_cmdline()` replaces `create_uki_addon()` when `BOOT_MODE=grub` | IBM TDX Secure Boot rejects unsigned addon EFI; UKI approach cannot deliver roothash under IBM's key set | dm-verity never enforced; root filesystem is writable |
 | N | `verity.sh` | EXIT trap preserves `$?`; upstream always exits 0 | `set -e` failures inside verity.sh were swallowed and caller saw success | Any verity failure looks like success |
-| O-1 | `luks-scratch/30-scratch.conf` | `SizeMaxBytes=268435456` (256 MB cap) | No cap → partition fills ~2.6 GB free space → LUKS+ext4 format takes ~90 s on IBM storage → exceeds hardcoded 30 s kata `checkRequestTimeout` → VM killed | scratch format takes ~90 s, VM dies before kata-agent handshakes |
-| O-2 | `luks-scratch/kata-agent.service.d/10-override.conf` | `After=luks-scratch.service` + `Requires=luks-scratch.service` in `[Unit]` | Without ordering kata-agent races ahead of luks-scratch, writes agent.sock, APF fires, 30 s clock starts before scratch is ready | kata-agent and APF start before scratch is formatted, VM killed at 48.7 s |
-| O-3 | `luks-scratch/format-scratch.sh` | `--pbkdf pbkdf2 --pbkdf-force-iterations 1000` + `mkfs.ext4 -m 0 -E nodiscard,lazy_itable_init=1,lazy_journal_init=1` | Argon2id default KDF takes ~7.4 s luksFormat + ~2 s luksOpen on NVMe (benchmarked). Key is random and ephemeral — strong KDF adds nothing. pbkdf2-1000 drops to <100 ms total KDF overhead. | With large partitions or slow KDF, format still risks racing the timeout |
-| O-4 | `luks-scratch/luks-scratch.service` + `luks-scratch/format-scratch.sh` | Removed `Requires=systemd-repart.service`, `After=systemd-repart.service`, `BindsTo=dev-disk-by\x2dpartlabel-scratch.device` from service unit; `format-scratch.sh` now calls `systemd-repart` directly with `--definitions=/usr/lib/repart.d` | System `systemd-repart.service` has a trigger condition: it only runs when dm-verity is active (roothash= in kernel cmdline). With the grub boot mode deviation M, dm-verity IS now active and confirmed on IBM TDX — this deviation is retained as defence-in-depth. Revert when the grub+dm-verity approach is superseded or UKI addon signing is implemented. | Scratch partition is never created; luks-scratch never starts; kata-agent (Requires=luks-scratch) never starts; pod times out. |
-| O-5 | `luks-scratch/luks-scratch.service` | Removed `Wants=kata-agent.service` from service unit | Upstream unit includes `Wants=kata-agent.service` + `Before=kata-agent.service`. The `Wants=` pulls kata-agent in at boot before CDH socket is created (~3s race), causing kata-agent to fail probing CDH and panic at first container pull. | kata-agent starts prematurely at boot, CDH client is uninitialized, kata-agent panics on image pull. Revert condition: upstream drops `Wants=kata-agent.service` or kata-agent no longer probes CDH at startup. |
+| O-1 (see DES1) | `luks-scratch/30-scratch.conf` | `SizeMaxBytes=268435456` (256 MB cap) | No cap → partition fills ~2.6 GB free space → LUKS+ext4 format takes ~90 s on IBM storage → exceeds hardcoded 30 s kata `checkRequestTimeout` → VM killed | scratch format takes ~90 s, VM dies before kata-agent handshakes |
+| O-2 (see DES1) | `luks-scratch/kata-agent.service.d/10-override.conf` | `After=luks-scratch.service` + `Requires=luks-scratch.service` in `[Unit]` | Without ordering kata-agent races ahead of luks-scratch, writes agent.sock, APF fires, 30 s clock starts before scratch is ready | kata-agent and APF start before scratch is formatted, VM killed at 48.7 s |
+| O-3 (see DES1) | `luks-scratch/format-scratch.sh` | `--pbkdf pbkdf2 --pbkdf-force-iterations 1000` + `mkfs.ext4 -m 0 -E nodiscard,lazy_itable_init=1,lazy_journal_init=1` | Argon2id default KDF takes ~7.4 s luksFormat + ~2 s luksOpen on NVMe (benchmarked). Key is random and ephemeral — strong KDF adds nothing. pbkdf2-1000 drops to <100 ms total KDF overhead. | With large partitions or slow KDF, format still risks racing the timeout |
+| O-4 (see DES1) | `luks-scratch/luks-scratch.service` + `luks-scratch/format-scratch.sh` | Removed `Requires=systemd-repart.service`, `After=systemd-repart.service`, `BindsTo=dev-disk-by\x2dpartlabel-scratch.device` from service unit; `format-scratch.sh` now calls `systemd-repart` directly with `--definitions=/usr/lib/repart.d` | System `systemd-repart.service` has a trigger condition: it only runs when dm-verity is active (roothash= in kernel cmdline). With the grub boot mode deviation M, dm-verity IS now active and confirmed on IBM TDX — this deviation is retained as defence-in-depth. Revert when the grub+dm-verity approach is superseded or UKI addon signing is implemented. | Scratch partition is never created; luks-scratch never starts; kata-agent (Requires=luks-scratch) never starts; pod times out. |
+| O-5 (see DES1) | `luks-scratch/luks-scratch.service` | Removed `Wants=kata-agent.service` from service unit | Upstream unit includes `Wants=kata-agent.service` + `Before=kata-agent.service`. The `Wants=` pulls kata-agent in at boot before CDH socket is created (~3s race), causing kata-agent to fail probing CDH and panic at first container pull. | kata-agent starts prematurely at boot, CDH client is uninitialized, kata-agent panics on image pull. Revert condition: upstream drops `Wants=kata-agent.service` or kata-agent no longer probes CDH at startup. |
 | Q | `kickstart`, `verity.sh`, `podvm_maker.sh` | `BOOT_MODE=grub`: new kickstart `rhel10-dm-root-grub.ks` (3-partition: EFI + XBOOTLDR /boot + root), `inject_grub_cmdline()` in verity.sh, no tpm2_pcrextend drop-in | IBM TDX Secure Boot (IBM default db: Microsoft UEFI CA) rejects unsigned addon EFI — see full justification in §Q below | dm-verity never enforced on IBM Cloud TDX |
 | CIS | `scripts/coco/podvm/cis-harden.sh` (new, IBM-only) + `HARDENED=1` hook in `patches/coco-components.sh` | CIS L1 Server "safe tier" hardening run via `virt-customize --run` before verity (so covered by roothash). Only when `HARDENED=1` | Upstream `coco-podvm-scripts` has no CIS hardening; Tenable/Nessus CIS scan failures (see `rhel10-experimental/NESSUS_CIS_REVIEW.md`) | Hardened image fails CIS scan items it was built to fix |
 
@@ -294,6 +295,8 @@ what failed.
 ---
 
 ## O: `luks-scratch` — partition size cap + kata-agent ordering
+
+> **See DES1** (bottom of this file). The "Upstream" quotes in O-1 and O-2 are CAA mkosi scratch files. CAA removed that feature in #3356. The true parent is `confidential-devhub/coco-podvm-scripts` `luks-scratch/`. Re-audit pending. Also, `format-scratch.sh` scans `/dev/vda` and `/dev/sda` by position, which can collide with customer volumes attached at create time (CAA #3297).
 
 ### Files changed
 - `scripts/coco/podvm/luks-scratch/usr/lib/repart.d/30-scratch.conf`
@@ -621,6 +624,8 @@ deviations. The grub base image and kickstart remain available as a fallback.
 
 ## P: Uptycs EDR install in `coco-components.sh` (RHEL 10 patch)
 
+> Related, not Uptycs: the Nessus data disk service is tracked as **DES2**, and the payload version (`PAYLOAD_TAG`) as **DES3**, in "Deviation Exit Strategy" below.
+
 **Upstream `coco-components.sh`**: single `virt-customize` with script-disk-mods, payload/pause/luks tarballs, `podvm_maker.sh`. No EDR.
 
 **Ours** (`rhel10-experimental/scripts/patches/coco-components.sh`): adds `--copy-in` of `uptycs-complete.tar.gz`, `provision-uptycs.sh`, `uptycs-osquery.service` to `/tmp/` and `--run install-uptycs.sh` after `podvm_maker.sh`. Hard-fails before virt-customize if any of the four files is missing from `ARTIFACTS_FOLDER`.
@@ -630,3 +635,92 @@ deviations. The grub base image and kickstart remain available as a fallback.
 **Why**: IBM requires Uptycs EDR on all peer pod VMs. Upstream has no hook for extra payloads.
 
 **Revert condition**: never (IBM-specific). If upstream adds an extra-payload hook, move to that.
+
+---
+
+## Deviation Exit Strategy
+
+Added 2026-11-16. Context and evidence: `docs/STORAGE_UPSTREAM_TRACKING.md`, `docs/STORAGE_TRACKING_INVESTIGATION_LOG_2026-11-16.md`. Draft upstream replies (not posted): `docs/STORAGE_RESPONSE_DRAFTS.md`.
+
+**What this section is.** Each DES entry says how a deviation could end, or why it will not. Not every deviation will be removed, and the exits are not all the same kind. Each existing deviation entry carries a pointer ("see DES1").
+
+**Exit types used below**
+- **Align**: adopt the parent's current design and drop our delta.
+- **Replace**: move to a different upstream mechanism.
+- **Keep, harden**: stays IBM-specific. Reduce risk and re-check on a schedule.
+- **Wait**: nothing to do until an upstream change lands.
+
+**Known problem with the audit above.** Sections O-1 and O-2 quote CAA mkosi files as "upstream" (label `trusted_store`, `scratch-storage.service`, the scratch marker). Those belong to CAA's scratch feature, which CAA removed in #3356 (2026-10-05). The true parent of our `luks-scratch` is `confidential-devhub/coco-podvm-scripts` `scripts/coco/podvm/luks-scratch/` (Red Hat). The "Upstream" text in O-1 to O-5 has not been re-checked against those files. Treat the O-1..O-5 baselines as unverified until DES1 step 1 is done.
+
+### DES1: `luks-scratch` (section O, rows O-1..O-5)
+
+| | |
+|---|---|
+| **Exit type** | Align (primary), Replace (long term option) |
+| **Our files** | `scripts/coco/podvm/luks-scratch/` (`format-scratch.sh`, `luks-scratch.service`, `kata-agent.service.d/10-override.conf`, `usr/lib/repart.d/30-scratch.conf`) |
+| **True parent** | `confidential-devhub/coco-podvm-scripts` same path. RH `create-scratch.sh` uses `systemd-repart --key-file` with a temporary definition. Unit has `After=systemd-repart.service`. The drop-in mounts `/dev/mapper/scratch` on `/run/kata-containers` |
+| **Upstream state** | CAA scratch removed (#3356). RH documents scratch as downstream-only: OSC #3232 and coco-podvm-scripts #319, both open. Fail-closed. Confidentiality only, no integrity |
+| **Our differences to keep in mind** | The O-1 size cap is reverted, so we use all free space (RH reserves 2500 MiB at image build). O-3 swaps the KDF to pbkdf2/1000 and uses lazy mkfs. O-4 and O-5 change unit dependencies. `format-scratch.sh` scans `/dev/vda` and `/dev/sda` by position |
+
+**Steps**
+1. Re-audit O-1..O-5 against the RH files above. Rewrite the "Upstream" text of each entry, and drop any entry where RH already matches us. This is the first action and nothing else in DES1 depends on opinion until it is done.
+2. Replace the `/dev/vda` / `/dev/sda` scan with a match on the partition label or the by-partuuid. #3297 passes customer volumes as `/dev/disk/by-id/virtio-*`, and a customer volume could take the position `format-scratch.sh` scans.
+3. Watch OSC #3232 and coco-podvm-scripts #319. If RH merges a design that covers fail-closed, key handling and sizing, Align and delete our delta.
+4. Long term option: adopt CDH `secure_mount` if guest-components gains persistent/ephemeral LUKS support (guest-components #1648, #1715, #1678). Not available on `main` today.
+
+**Revert/exit condition.** O-3 is the one most likely to stay: it is a measured timing fix for IBM storage. Keep it unless RH's `create-scratch.sh` shows equal timings in our environment. Test with `test_scratch_backing` and the large-image-pull test in `scripts/test-podvm.sh`.
+
+**Risk if we do nothing.** The audit drifts further from RH. A later RH change to the unit ordering could silently conflict with our drop-in.
+
+### DES2: `podvm-nessus-disk` (not in the deviation table yet)
+
+| | |
+|---|---|
+| **Exit type** | Keep (internal-only tool; low priority) |
+| **Scope (user, 2026-11-16)** | Internal only. Used to launch an image and register it in Nessus. Not customer facing. If it breaks completely, that is acceptable as long as it does not break the rest of confidential containers |
+| **Our files** | `scripts/coco/podvm/podvm-nessus-disk`, `podvm-nessus-disk.service`, `services/podvm-nessus-disk.service`; docs `docs/PODVM_NESSUS_DISK_SERVICE.md`, `docs/DMVERITY_AND_NESSUS_DISK_VALIDATION_2026-11-16.md` |
+| **Upstream state** | No equivalent in RH `coco-podvm-scripts` or CAA. The disk comes from our own initdata flag |
+| **Why it conflicts with upstream work** | It takes `/dev/vdb` by position. CAA #3297 attaches customer persistent volumes at instance create, also as virtio disks |
+
+**The only requirement that matters for everyone else.** With the initdata flag absent, the service must do nothing. Read 2026-11-16: it exits 0 at the gate (script lines 45-48) before touching any disk. The unit orders itself `Before=kata-agent.service` but does not `Require` it, so a failure with the flag on leaves the unit failed and does not by itself stop kata-agent. Not checked: whether any other unit pulls it in.
+
+**Steps (all low priority)**
+1. Keep the boolean initdata gate. Do not add behavior that needs a CAA change.
+2. Optional: match the disk by by-id or label instead of `vdb`. The collision with a customer volume (CAA #3297) only matters if a pod has both the Nessus flag and a customer PVC, which is not a supported use. The `blkid -p` guard refuses only already-formatted disks, so a blank disk at `vdb` would be formatted (read from the script, not tested).
+3. Add a "flag absent: service is idle and `/opt` unchanged" check and a Nessus `/opt` case to `scripts/test-podvm.sh` so we notice if it ever stops being idle.
+
+**Exit condition.** There is no upstream exit. Revisit if upstream provides a generic "extra disk with a role" mechanism.
+
+### DES3: payload / CAA volume path (`PAYLOAD_TAG`)
+
+| | |
+|---|---|
+| **Exit type** | Wait / Align. Priority: highest (dnwe's #3297 work is the first consumer of persistent volumes) |
+| **Our setting (corrected 2026-11-16)** | `build-rhel10-overlay.sh` line 62: default `PODVM_BINARY` = `quay.io/redhat-user-workloads/ose-osc-tenant/osc-podvm-payload@sha256:5ddecbd46f55...` (v1.14, built 2026-09-30, `vcs-ref` `3c1e6dd4` in `openshift/cloud-api-adaptor` `osc-release`). `PAYLOAD_TAG=1.13.1` is used only if `PODVM_BINARY` is cleared. An earlier version of this entry wrongly said the default was 1.13.1 |
+| **Verified payload contents** | At `3c1e6dd4`: #3037 passthrough present (`formatAndMount`, `cloudVolumeMountBase`). **Absent**: `findDataDiskByPath`, `cloud-provider` field in `apf.json`, IBM volume-attach code, `cdh_client`. Still ships upstream's `setup-scratch-storage`. Source: `scratch/logs/survey-payload-code.log` |
+| **What #3297 needs from our image** | An agent-protocol-forwarder that has #3297 (reads `Device`, `cloud-provider`); udev producing `/dev/disk/by-id/virtio-*` for data disks; `mount`, `blkid`, `mkfs.ext4`/`mkfs.xfs`, `udevadm`, `lsblk` present; nothing else mounting or claiming the data disk before CAA's mount. See investigation log Batch 5 |
+| **Newer refs** | `osc-release-v1.14` operator pin `bd819a99` and `devel` carry `cdh_client.go` (the LUKS code upstream reverted in #3416). Our current digest does **not**. #3297 and #3299 are in **no** OSC ref |
+
+**Steps**
+1. Done 2026-11-16: inspected the default payload (above). It cannot resolve #3297's by-id path.
+2. Done 2026-11-16: dnwe's team does not use the RH payload's forwarder. `github.ibm.com/cdp/coco-podvm-image/forwarder/Dockerfile` builds upstream CAA **v0.23.0** and applies patches 0001/0002/0003/0008/0010 (0003 = #3297, 0002 = #3299). The matching host side is the `coco-cloud-api-adaptor` chart built with the same patches. Agree one combination to validate against: the cdp forwarder plus that adaptor. Clone is in `ibm_cloud_rhel9/upstream-repos/ibm-internal/` (tracker 5.1, Batches 8-10).
+3. Get a forwarder with #3297 guest code. Options: (a) reuse the cdp `forwarder/patches` on v0.23.0 for a test-only build of `agent-protocol-forwarder` swapped into our image; (b) RH Konflux build of a newer `osc-release` that includes it. Do not ship a test binary. Note (a) carries `secureMount` (reverted upstream in #3416), see R7.
+4. Run a PVC test on our image with that payload; add a PVC case to `scripts/test-podvm.sh`. Test version skew: new CAA with the current payload, and the reverse.
+5. Do not move to a payload that carries `cdh_client` until R2 in `docs/STORAGE_RESPONSE_DRAFTS.md` is answered. **OSC 1.14 as it stands (2026-11-16) carries `cdh_client` and lacks #3297**, and no `v1.14.*` tag exists yet. The user is an OSC developer; OSC 1.14 is in code freeze (user, 2026-11-16). #3297, #3299 and the upstream #3416 revert are all upstream of Red Hat, so the post-1.14 rebase of `osc-release` onto upstream CAA should bring them in together and drop `cdh_client`. In 1.14 the IBM provider attaches nothing, so `cdh_client` is inert on IBM Cloud there. Mechanism (verified 2026-11-16, investigation log Batch 7): OSC merges upstream CAA **release tags** into `osc-release` (v0.21.1, v0.22.0, v0.23.0), then cherry-picks fixes. #3155 came in with v0.23.0. #3299, #3356, #3416 and #3297 are in no upstream tag yet (latest is v0.23.0, 2026-09-23). All four are merged on main, so the next tag (likely late Nov to Dec) contains them together. Check when that tag is cut and when OSC merges it: `cdh_client.go` absent, `findDataDiskByPath` present. It is only a problem if OSC cherry-picks #3297 alone or keeps #3155 as a downstream patch.
+
+**Exit condition.** An OSC payload that contains #3297 and #3299 and not the reverted LUKS code.
+
+### Review cadence
+
+Re-check DES1-DES3 and the tracker whenever `PAYLOAD_TAG` changes, and at least monthly. Record each re-check in the change log of `docs/STORAGE_UPSTREAM_TRACKING.md`.
+
+### DES4: generic initramfs with overlay.ko (dracut `hostonly=no`) — added 2026-11-18
+
+| | |
+|---|---|
+| **Exit type** | Keep (our boot cmdline uses `systemd.volatile=overlay`; upstream does not) |
+| **What upstream does** | `dnf update` inside the virt-customize appliance lets kernel-install run dracut in host-only mode |
+| **What we do** | `rhel10-experimental/scripts/patches/coco-components.sh` writes `/etc/dracut.conf.d/91-podvm-generic.conf` (`hostonly=no`, `add_drivers+=" overlay "`) BEFORE the update, then runs `dracut -f --regenerate-all` AFTER it, before verity/roothash stamping |
+| **Why** | rhel10-2026111814 booted to emergency mode in IBM Cloud: the host-only initramfs had no `overlay.ko`, so `systemd-volatile-root` failed in the initrd |
+| **Gates** | `scripts/verify-qcow2.sh` asserts `overlay.ko` is in the initramfs and gate [7] boots the image in QEMU; `build-rhel10-overlay.sh` Step 5 fails the build if gate [7] did not report a passing boot |
+| **Revert condition** | Drop the config if the cmdline stops using `systemd.volatile=overlay`, or if the initramfs is built outside the appliance |
