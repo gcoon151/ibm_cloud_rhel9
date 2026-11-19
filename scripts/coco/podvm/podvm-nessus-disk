@@ -1,0 +1,130 @@
+#!/bin/bash
+# podvm-nessus-disk — Idle unless INITDATA contains nessus=true.
+# When gated ON: prepares the blank secondary instance disk (/dev/vdb) and mounts it on /opt.
+# When gated OFF (ordinary PodVMs, e2e, customer workloads): exits 0 immediately.
+
+set -euo pipefail
+
+LOG_TAG="podvm-nessus-disk"
+log() { echo "[$LOG_TAG] $*"; }
+log_err() { echo "[$LOG_TAG] ERROR: $*" >&2; }
+
+CONF_FILE="${CONF_FILE:-/run/peerpod/nessus.conf}"
+INITDATA_FILE="${INITDATA_FILE:-/run/peerpod/initdata}"
+INITDATA_TOML="${INITDATA_TOML:-/run/peerpod/initdata.toml}"
+
+# ---------------------------------------------------------------------------
+# Check if Nessus is requested via INITDATA
+# ---------------------------------------------------------------------------
+NESSUS_ENABLED=false
+
+# 1. Check dedicated nessus.conf if present
+if [ -f "$CONF_FILE" ] && grep -qiE '^\s*nessus\s*=\s*true\s*$' "$CONF_FILE" 2>/dev/null; then
+    NESSUS_ENABLED=true
+fi
+
+# 2. Check decoded/uncompressed initdata.toml or initdata
+if [ "$NESSUS_ENABLED" = false ] && [ -f "$INITDATA_TOML" ]; then
+    if grep -qiE '(nessus\.conf|nessus).*nessus=true' "$INITDATA_TOML" 2>/dev/null || \
+       grep -qiE '^\s*nessus\s*=\s*true\s*$' "$INITDATA_TOML" 2>/dev/null; then
+        NESSUS_ENABLED=true
+    fi
+fi
+
+if [ "$NESSUS_ENABLED" = false ] && [ -f "$INITDATA_FILE" ]; then
+    # Try decoding base64+gzip initdata
+    DECODED=$(cat "$INITDATA_FILE" 2>/dev/null | base64 -d 2>/dev/null | gzip -d 2>/dev/null || cat "$INITDATA_FILE" 2>/dev/null || true)
+    if [ -n "$DECODED" ]; then
+        if echo "$DECODED" | grep -qiE '(nessus\.conf|nessus).*nessus=true' 2>/dev/null || \
+           echo "$DECODED" | grep -qiE '^\s*nessus\s*=\s*true\s*$' 2>/dev/null; then
+            NESSUS_ENABLED=true
+        fi
+    fi
+fi
+
+if [ "$NESSUS_ENABLED" = false ]; then
+    log "Nessus scan not requested in INITDATA (idle). Exiting."
+    exit 0
+fi
+
+log "Nessus scan requested in INITDATA. Preparing /opt instance disk..."
+
+# ---------------------------------------------------------------------------
+# Identify and validate secondary instance disk
+# ---------------------------------------------------------------------------
+DISK="${NESSUS_DISK:-/dev/vdb}"
+
+if [ ! -b "$DISK" ]; then
+    log_err "Block device $DISK not found. Cannot create /opt partition."
+    exit 1
+fi
+
+if mountpoint -q /opt; then
+    log "/opt is already a mountpoint. Nothing to do."
+    exit 0
+fi
+
+# Helper function to find partition device node (${DISK}1 or ${DISK}p1)
+get_part_dev() {
+    local d="$1"
+    if [ -b "${d}1" ]; then
+        echo "${d}1"
+    elif [ -b "${d}p1" ]; then
+        echo "${d}p1"
+    elif [[ "$d" =~ [0-9]$ ]]; then
+        echo "${d}p1"
+    else
+        echo "${d}1"
+    fi
+}
+
+EXISTING_PART=$(get_part_dev "$DISK")
+
+# Safety guard: Refuse to format a disk that already has a partition table or filesystem signature
+if blkid -p "$DISK" >/dev/null 2>&1 || [ -b "$EXISTING_PART" ]; then
+    # If partition exists and has ext4, attempt safe mount
+    if [ -b "$EXISTING_PART" ] && blkid -t TYPE=ext4 "$EXISTING_PART" >/dev/null 2>&1; then
+        log "Found existing ext4 filesystem on $EXISTING_PART, mounting to /opt..."
+        mkdir -p /opt
+        mount "$EXISTING_PART" /opt
+        restorecon -R /opt 2>/dev/null || true
+        log "✓ Existing $EXISTING_PART mounted on /opt"
+        exit 0
+    fi
+    log_err "$DISK already has a signature or partition ($EXISTING_PART), refusing to re-format for safety."
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Partition, format and mount
+# ---------------------------------------------------------------------------
+log "Creating DOS partition on $DISK..."
+printf 'label: dos\n,,L\n' | sfdisk "$DISK"
+
+partprobe "$DISK" 2>/dev/null || partx -u "$DISK" 2>/dev/null || true
+udevadm settle 2>/dev/null || sleep 1
+
+# Wait up to 10s for partition device node to appear
+PART_DEV=$(get_part_dev "$DISK")
+for i in $(seq 1 20); do
+    [ -b "$PART_DEV" ] && break
+    sleep 0.5
+    PART_DEV=$(get_part_dev "$DISK")
+done
+
+if [ ! -b "$PART_DEV" ]; then
+    log_err "Partition device node $PART_DEV did not appear after partitioning $DISK."
+    exit 1
+fi
+
+log "Formatting $PART_DEV as ext4 (label: nessus-opt)..."
+mkfs.ext4 -F -L nessus-opt "$PART_DEV"
+
+log "Mounting $PART_DEV to /opt..."
+mkdir -p /opt
+mount "$PART_DEV" /opt
+
+# Restore SELinux labels if SELinux is active
+restorecon -R /opt 2>/dev/null || true
+
+log "✓ /opt instance disk successfully prepared and mounted on $PART_DEV ($(df -h /opt | awk 'NR==2 {print $2}'))."

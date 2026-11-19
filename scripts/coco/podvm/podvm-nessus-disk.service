@@ -1,0 +1,16 @@
+[Unit]
+Description=Create /opt disk for Nessus when INITDATA nessus=true
+After=process-user-data.service local-fs.target
+Requires=process-user-data.service
+Before=kata-agent.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/podvm-nessus-disk
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

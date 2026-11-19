@@ -1,0 +1,164 @@
+#!/bin/bash
+# ==============================================================================
+# /usr/local/bin/podvm-nessus-agent
+# Download, install, and link Tenable Nessus Agent inside PodVM.
+#
+# Idle unless INITDATA contains a "nessus.conf" entry with nessus=true.
+# Runs after podvm-nessus-disk.service mounts /opt.
+#
+# INITDATA delivery (verified 2026-11-18 on rhel10-2026111816): CAA process-user-data
+# (pkg/userdata/provision.go InitdDataFilesList) only writes aa.toml, cdh.toml and
+# policy.rego from INITDATA. Every other key is dropped, so /run/peerpod/nessus.conf and
+# nessus.key never exist by themselves. Like provision-uptycs.sh, this script therefore
+# extracts its own sections from the decoded /run/peerpod/initdata.
+# ==============================================================================
+set -euo pipefail
+
+PEERPOD_DIR="${PEERPOD_DIR:-/run/peerpod}"
+INITDATA_FILE="${INITDATA_FILE:-$PEERPOD_DIR/initdata}"
+CONF_FILE="$PEERPOD_DIR/nessus.conf"
+
+log_msg() {
+    local msg="[podvm-nessus-agent] $1"
+    echo "$msg"
+    # Also attempt writing to /dev/console for serial log capture
+    if [ -w /dev/console ]; then
+        echo "$msg" > /dev/console 2>/dev/null || true
+    fi
+}
+
+# 0. Extract nessus.conf / nessus.key from the decoded INITDATA (base64 + gzip + TOML).
+#    Idle (exit 0) when initdata is absent or has no "nessus.conf" entry.
+extract_from_initdata() {
+    [ -s "$INITDATA_FILE" ] || return 0
+    command -v python3 >/dev/null 2>&1 || { log_msg "ERROR: python3 not found; cannot parse INITDATA"; return 1; }
+    INITDATA_FILE="$INITDATA_FILE" PEERPOD_DIR="$PEERPOD_DIR" python3 - <<'PYEOF'
+import base64, gzip, os, sys, tomllib
+raw = open(os.environ["INITDATA_FILE"], "rb").read()
+try:
+    raw = gzip.decompress(base64.b64decode(raw))
+except Exception:
+    pass  # already plain TOML
+try:
+    data = tomllib.loads(raw.decode()).get("data", {})
+except Exception as e:
+    print("[podvm-nessus-agent] ERROR: cannot parse INITDATA TOML: %s" % e, file=sys.stderr)
+    sys.exit(1)
+for key in ("nessus.conf", "nessus.key"):
+    if key in data:
+        path = os.path.join(os.environ["PEERPOD_DIR"], key)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(data[key])
+PYEOF
+}
+extract_from_initdata
+
+# 1. Gate: Check if nessus is enabled
+if [ ! -f "$CONF_FILE" ]; then
+    exit 0
+fi
+
+if ! grep -qiE '^(nessus\s*=\s*"?true"?|"nessus"\s*=\s*"?true"?)$' "$CONF_FILE" 2>/dev/null; then
+    exit 0
+fi
+
+log_msg "Nessus gating active (nessus=true detected). Starting agent configuration..."
+
+# 2. Check /opt mount (must be mounted by podvm-nessus-disk on secondary disk)
+if ! findmnt /opt >/dev/null 2>&1; then
+    log_msg "ERROR: /opt is not mounted. Refusing to install onto root filesystem."
+    exit 1
+fi
+
+# 3. Idempotency: Check if already installed and connected
+if [ -x /opt/nessus_agent/sbin/nessuscli ]; then
+    STATUS_OUT=$(/opt/nessus_agent/sbin/nessuscli agent status 2>&1 || true)
+    if echo "$STATUS_OUT" | grep -qi "Link status: Connected"; then
+        log_msg "Nessus Agent already installed and connected."
+        # Trigger scan if requested
+        if grep -qiE '^nessus_trigger_scan\s*=\s*"?true"?' "$CONF_FILE" 2>/dev/null; then
+            mkdir -p /opt/nessus_agent/var/nessus/triggers
+            touch /opt/nessus_agent/var/nessus/triggers/scanme
+            log_msg "Triggered scanme."
+        fi
+        exit 0
+    fi
+fi
+
+# 4. Parse configuration options from nessus.conf
+parse_conf() {
+    local key="$1"
+    local default_val="$2"
+    local val
+    val=$(grep -iE "^${key}\s*=" "$CONF_FILE" 2>/dev/null | head -1 | sed -E "s/^${key}\s*=\s*[\"']?([^\"']*)[\"']?/\1/" | tr -d '\r')
+    if [ -z "$val" ]; then
+        echo "$default_val"
+    else
+        echo "$val"
+    fi
+}
+
+NESSUS_HOST=$(parse_conf "nessus_host" "sensor.cloud.tenable.com")
+NESSUS_PORT=$(parse_conf "nessus_port" "443")
+NESSUS_GROUPS=$(parse_conf "nessus_groups" "ALC")
+NESSUS_TRIGGER_SCAN=$(parse_conf "nessus_trigger_scan" "true")
+NESSUS_KEY_FILE=$(parse_conf "nessus_key_file" "/run/peerpod/nessus.key")
+
+# 5. Read linking key securely
+if [ ! -f "$NESSUS_KEY_FILE" ] || [ ! -s "$NESSUS_KEY_FILE" ]; then
+    log_msg "ERROR: Linking key file '$NESSUS_KEY_FILE' missing or empty. Cannot link agent."
+    exit 1
+fi
+
+TVM_KEY=$(tr -d '\r\n ' < "$NESSUS_KEY_FILE")
+if [ -z "$TVM_KEY" ]; then
+    log_msg "ERROR: Linking key is blank."
+    exit 1
+fi
+
+# 6. Download installer without passing key in argv
+INSTALL_SCRIPT="/opt/nessus-install.sh"
+log_msg "Downloading Tenable agent installer from https://${NESSUS_HOST}:${NESSUS_PORT}/install/agent?groups=${NESSUS_GROUPS}..."
+
+if ! printf 'header = "X-Key: %s"\n' "$TVM_KEY" | curl -sS --fail -K - -o "$INSTALL_SCRIPT" "https://${NESSUS_HOST}:${NESSUS_PORT}/install/agent?groups=${NESSUS_GROUPS}"; then
+    log_msg "ERROR: Failed to download installer from Tenable sensor endpoint."
+    rm -f "$INSTALL_SCRIPT"
+    exit 1
+fi
+
+chmod +x "$INSTALL_SCRIPT"
+
+# 7. Apply patch for RHEL dnf supplementary repo bypass
+sed -i 's|cmd="$dnfcmd $file"|cmd="$dnfcmd --disablerepo=*supplementary* --nogpgcheck $file"|' "$INSTALL_SCRIPT"
+
+# 8. Run installer
+log_msg "Executing Tenable agent installer..."
+if ! "$INSTALL_SCRIPT"; then
+    log_msg "ERROR: Tenable agent installation failed."
+    rm -f "$INSTALL_SCRIPT"
+    exit 1
+fi
+rm -f "$INSTALL_SCRIPT"
+
+# 9. Clean up key file from disk and memory
+rm -f "$NESSUS_KEY_FILE"
+unset TVM_KEY
+
+# 10. Trigger scan if configured
+if [ "$NESSUS_TRIGGER_SCAN" = "true" ]; then
+    mkdir -p /opt/nessus_agent/var/nessus/triggers
+    touch /opt/nessus_agent/var/nessus/triggers/scanme
+    log_msg "Created /opt/nessus_agent/var/nessus/triggers/scanme."
+fi
+
+# 11. Report agent status
+if [ -x /opt/nessus_agent/sbin/nessuscli ]; then
+    log_msg "=== Nessus Agent Status ==="
+    STATUS_OUT=$(/opt/nessus_agent/sbin/nessuscli agent status 2>&1 || true)
+    log_msg "$STATUS_OUT"
+    log_msg "==========================="
+fi
+
+log_msg "Nessus agent installation & linking complete."
+exit 0

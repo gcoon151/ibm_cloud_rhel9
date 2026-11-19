@@ -1,0 +1,19 @@
+[Unit]
+Description=Install and link the Tenable Nessus Agent when INITDATA nessus=true
+After=podvm-nessus-disk.service process-user-data.service network-online.target
+Wants=network-online.target
+Requires=podvm-nessus-disk.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+ExecStart=/usr/local/bin/podvm-nessus-agent
+TimeoutStartSec=15min
+Restart=on-failure
+RestartSec=60
+StartLimitBurst=3
+
+[Install]
+WantedBy=multi-user.target
