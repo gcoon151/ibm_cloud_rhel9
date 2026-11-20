@@ -226,9 +226,11 @@ EOF
     fi
 fi
 
-# batch rsys (#5 CIS 6.2.3.6, 2026-11-20): the audit wants an rsyslog omfwd action. rsyslog is ENABLED here (it was disabled above:
-# journald-only), forwards authpriv over TCP to 127.0.0.1:514, and an imtcp listener on the same address keeps what arrives in
-# /var/log/remote/auth.log (0640 root). So the action does real work, but logs do NOT leave the VM (see batch jlog comment).
+# batch rsys (#5 CIS 6.2.3.6, 2026-11-20): the audit wants an rsyslog omfwd action in the config. rsyslog stays DISABLED: CIS 6.2.1.4
+# (OpenSCAP ensure_journald_and_rsyslog_not_active_together) needs exactly ONE logging system active, and journald + journal-upload
+# (batch jlog, #14) is that one. Enabling rsyslog as well failed 6.2.1.4 in the oscap1 run (2026-11-20) and would also pull in the
+# rsyslog-in-use CIS rules (journald ForwardToSyslog etc.). So this is a staged config: if someone switches to rsyslog it forwards
+# authpriv to a loopback listener that retains it in /var/log/remote/auth.log (0640 root). Logs do NOT leave the VM (see batch jlog).
 if want rsys; then
     mkdir -p /var/log/remote /etc/rsyslog.d
     chmod 750 /var/log/remote
@@ -244,9 +246,9 @@ if want rsys; then
         > /etc/rsyslog.d/90-cis-remote.conf
     chmod 644 /etc/rsyslog.d/90-cis-remote.conf
     grep -q 'type="omfwd"' /etc/rsyslog.d/90-cis-remote.conf
-    systemctl enable rsyslog.service >/dev/null 2>&1
-    [ -L /etc/systemd/system/multi-user.target.wants/rsyslog.service ] || { echo "ERROR: rsyslog not enabled" >&2; exit 1; }
-    DONE+=(rsyslog-omfwd-loopback)
+    systemctl disable rsyslog.service >/dev/null 2>&1 || true
+    [ ! -e /etc/systemd/system/multi-user.target.wants/rsyslog.service ] || { echo "ERROR: rsyslog still enabled" >&2; exit 1; }
+    DONE+=(rsyslog-omfwd-staged-disabled)
 fi
 
 

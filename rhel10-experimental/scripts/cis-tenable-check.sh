@@ -138,13 +138,9 @@ chk "R-crypto-policy-applies" "$(update-crypto-policies --show)" bash -c 'update
 chk "R-rpm-sig-rhel-pkg" "rpm -K failed on an installed header" bash -c 'rpm -q --qf "%{NAME} %{SIGPGP:pgpsig}\n" bash | grep -qi "key ID"'
 chk "R-openssl-tls-nosha1" "openssl cannot do a SHA256 sign/verify" bash -c 'echo x | openssl dgst -sha256 >/dev/null'
 
-# the loopback sinks added for #5/#14 must really receive data (otherwise the checks above would be cosmetic)
-if systemctl is-enabled rsyslog.service >/dev/null 2>&1; then
-    chk "R-rsyslog-active" "is-active=$(systemctl is-active rsyslog.service 2>&1)" bash -c '[ "$(systemctl is-active rsyslog.service)" = active ]'
-    logger -p authpriv.info "cis-tenable-check-probe-$$"; sleep 3
-    chk "R-rsyslog-loopback-receives" "authpriv probe not found in /var/log/remote/auth.log" grep -q "cis-tenable-check-probe-$$" /var/log/remote/auth.log
-    chk "R-rsyslog-authlog-mode" "$(stat -c '%a %U:%G' /var/log/remote/auth.log 2>&1)" bash -c '[ $(( 0$(stat -c %a /var/log/remote/auth.log) & 0137 )) -eq 0 ]'
-else res INFO "R-rsyslog" "rsyslog not enabled in this build"; fi
+# CIS 6.2.1.4: exactly one logging system active (journald + journal-upload); the rsyslog omfwd config (#5) is staged, rsyslog disabled
+chk "R-one-logging-system" "active: $(systemctl is-active rsyslog systemd-journald 2>&1 | tr '\n' ' ')" \
+    bash -c '[ "$(systemctl is-active rsyslog systemd-journald 2>/dev/null | grep -c "^active$")" = 1 ]'
 if systemctl is-enabled podvm-journal-sink.service >/dev/null 2>&1; then
     chk "R-journal-sink-active" "is-active=$(systemctl is-active podvm-journal-sink.service 2>&1)" bash -c '[ "$(systemctl is-active podvm-journal-sink.service)" = active ]'
     chk "R-journal-sink-listens-loopback-only" "$(ss -ltn | grep 19532)" bash -c 'ss -ltn | grep -q "127.0.0.1:19532" && ! ss -ltn | grep 19532 | grep -qE "0.0.0.0:19532|\[::\]:19532|\*:19532"'
