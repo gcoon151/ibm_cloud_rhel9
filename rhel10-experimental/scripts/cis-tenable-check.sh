@@ -19,7 +19,7 @@ chk() { # <tag> <detail-if-fail> <command...>  (PASS when command succeeds)
 echo "=== A. Tenable-equivalent checks ==="
 # #1 CIS 1.1.2.1.1: /etc/fstab has a /tmp line AND tmp.mount enabled
 chk "#1-fstab-/tmp" "no /tmp line in /etc/fstab" grep -Eq '^[^#]+[[:space:]]+/tmp[[:space:]]' /etc/fstab
-chk "#1-tmp.mount-enabled" "tmp.mount not enabled" bash -c '[ "$(systemctl is-enabled tmp.mount)" = enabled ]'
+chk "#1-tmp.mount-enabled" "tmp.mount is-enabled='$(systemctl is-enabled tmp.mount 2>&1)' (Tenable printed 'enabled' and PASSED)" bash -c '[ "$(systemctl is-enabled tmp.mount)" = enabled ]'
 
 # #3 CIS 6.2.4.1: the CIS audit script, with the fix actions replaced by a report (same case table)
 bad=0
@@ -67,7 +67,7 @@ IFS=: read -ra DIRS <<< "$RPATH"
 for d in "${DIRS[@]}"; do
     if [ -z "$d" ] || [ "$d" = . ]; then res FAIL "#9-root-path" "empty or '.' element in PATH=$RPATH"; bad=1; continue; fi
     [ -d "$d" ] || { res FAIL "#9-root-path" "$d is not a directory"; bad=1; continue; }
-    m=$(stat -c %a "$d"); o=$(stat -c %U "$d")
+    m=$(stat -L -c %a "$d"); o=$(stat -L -c %U "$d")   # -L: /bin and /sbin are symlinks to /usr/bin, /usr/sbin
     [ "$o" = root ] || { res FAIL "#9-root-path" "$d owner $o"; bad=1; }
     [ $(( 0$m & ~0755 )) -eq 0 ] || { res FAIL "#9-root-path" "$d mode $m"; bad=1; }
 done

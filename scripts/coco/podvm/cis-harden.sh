@@ -306,12 +306,17 @@ if [ "$LEVEL" -ge 3 ]; then
     grep -q '^tmpfs /dev/shm ' /etc/fstab || echo 'tmpfs /dev/shm tmpfs defaults,nodev,nosuid,noexec 0 0' >> /etc/fstab
     mkdir -p /etc/systemd/system/tmp.mount.d
     printf '[Mount]\nOptions=mode=1777,strictatime,nosuid,nodev,noexec\n' > /etc/systemd/system/tmp.mount.d/cis.conf
-    # batch tmp (#1, CIS 1.1.2.1.1): the audit reads /etc/fstab for a /tmp line; the tmp.mount drop-in alone is not enough.
-    # Options are identical to the drop-in above (plus size=2G, the value in the CIS example).
+    # batch tmp (#1, CIS 1.1.2.1.1): the audit reads /etc/fstab for a /tmp line AND needs `systemctl is-enabled tmp.mount` = enabled.
+    # Dev-loop run 2026-11-19: with only the fstab line, `systemctl is-enabled tmp.mount` stopped returning "enabled" (the
+    # fstab line alone broke that half of the check). Hypothesis (to be confirmed by the next run, which prints the value):
+    # systemd now uses its fstab-generated unit and reports "generated". A real unit file in /etc/systemd/system should
+    # take precedence and keep it "enabled". Options are the same in fstab, unit and drop-in (plus size=2G, the CIS example).
     if want tmp; then
         grep -Eq '^[^#]+[[:space:]]+/tmp[[:space:]]' /etc/fstab || \
             echo 'tmpfs /tmp tmpfs defaults,rw,nosuid,nodev,noexec,relatime,size=2G 0 0' >> /etc/fstab
         grep -Eq '^[^#]+[[:space:]]+/tmp[[:space:]]' /etc/fstab
+        cp /usr/lib/systemd/system/tmp.mount /etc/systemd/system/tmp.mount
+        printf '[Mount]\nOptions=mode=1777,strictatime,nosuid,nodev,noexec,size=2G\n' > /etc/systemd/system/tmp.mount.d/cis.conf
         DONE+=(tmp-fstab)
     fi
     systemctl enable tmp.mount >/dev/null 2>&1
