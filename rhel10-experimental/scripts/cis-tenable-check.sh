@@ -111,7 +111,11 @@ chk "R-15150-open-in-public" "15150/tcp not in public zone" bash -c 'firewall-cm
 chk "R-tmp-mounted-tmpfs" "$(findmnt -no SOURCE,FSTYPE,OPTIONS /tmp 2>&1)" bash -c 'findmnt -no FSTYPE /tmp | grep -qx tmpfs'
 chk "R-tmp-noexec-nosuid-nodev" "$(findmnt -no OPTIONS /tmp 2>&1)" bash -c 'o=$(findmnt -no OPTIONS /tmp); [[ $o == *noexec* && $o == *nosuid* && $o == *nodev* ]]'
 chk "R-dev-shm-noexec" "$(findmnt -no OPTIONS /dev/shm 2>&1)" bash -c 'findmnt -no OPTIONS /dev/shm | grep -q noexec'
-chk "R-no-failed-units" "failed: $(systemctl --failed --no-legend --plain | awk '{print $1}' | tr '\n' ' ')" bash -c '[ -z "$(systemctl --failed --no-legend --plain)" ]'
+# agent-protocol-forwarder.{service,path} cannot start in a local QEMU boot (no podns netns, no peer-pod provisioning). It fails the same way
+# in the control batch ("none"); whether it shows as failed or auto-restart at check time is timing. So it is INFO, every other failed unit is FAIL.
+FU=$(systemctl --failed --no-legend --plain | awk '{print $1}' | grep -v '^agent-protocol-forwarder\.' | tr '\n' ' ')
+[ -z "$(echo "$FU" | tr -d ' ')" ] && res PASS "R-no-failed-units" "" || res FAIL "R-no-failed-units" "failed: $FU"
+res INFO "R-apf-state" "agent-protocol-forwarder: $(systemctl is-active agent-protocol-forwarder.service 2>&1) (expected not active in a local boot)"
 chk "R-sshd-or-no-need" "" true
 # loopback TCP still works through the new rich rules (CDH / attestation-agent / agent-protocol-forwarder talk over 127.0.0.1)
 if ss -ltn | grep -q ':15150 '; then

@@ -426,10 +426,10 @@ if [ "$LEVEL" -ge 3 ]; then
     # Safe only because HARDENED builds require SSHD_SERVICE=false (build-rhel10-overlay.sh refuses otherwise). cis-scan.sh re-opens ssh
     # at RUNTIME in its throw-away overlay (cloud-init runcmd), so the scan harness still works.
     if want zone; then
-        for s in ssh cockpit dhcpv6-client; do
-            firewall-offline-cmd --zone=public --remove-service=$s >/dev/null 2>&1 || true
-        done
-        ! firewall-offline-cmd --zone=public --list-services | grep -Eqw 'ssh|cockpit|dhcpv6-client'
+        # firewall-offline-cmd has no working --remove-service (rc=2 "lokkit options", probed 2026-11-20), so edit the zone file.
+        sed -i -E '/<service name="(ssh|cockpit|dhcpv6-client)"\/>/d' /etc/firewalld/zones/public.xml
+        ! grep -Eq 'service name="(ssh|cockpit|dhcpv6-client)"' /etc/firewalld/zones/public.xml || { echo "ERROR: public zone still lists ssh/cockpit/dhcpv6-client" >&2; exit 1; }
+        grep -q 'port="15150" protocol="tcp"' /etc/firewalld/zones/public.xml || { echo "ERROR: 15150/tcp lost from public zone" >&2; exit 1; }
         DONE+=(fw-public-zone-closed)
     fi
     firewall-offline-cmd --zone=public --list-ports | grep -qw '15150/tcp' || { echo "ERROR: 15150/tcp not open in firewalld" >&2; exit 1; }
