@@ -609,7 +609,7 @@ if [ "$APPLY_VERITY" = "true" ]; then
 
     # Step 4. Prepare and install the addon or inject GRUB cmdline
     echo ""
-    if [ "${BOOT_MODE:-uki}" = "grub" ]; then
+    if [ "${BOOT_MODE:-grub}" = "grub" ]; then
         inject_grub_cmdline
     else
         create_uki_addon

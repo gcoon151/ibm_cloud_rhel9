@@ -20,8 +20,8 @@
 # file to the overlay script — only pass copies.
 #
 # Usage:
-#   bash helpers/rebuild-base-rhel10.sh                      # UKI mode (default)
-#   bash helpers/rebuild-base-rhel10.sh --boot-mode grub     # grub+verity mode
+#   bash helpers/rebuild-base-rhel10.sh                      # grub+verity mode (default; the only RHEL 10 mode)
+#   bash helpers/rebuild-base-rhel10.sh --boot-mode uki      # legacy UKI experiment, not used
 #   bash helpers/rebuild-base-rhel10.sh --iso /path/to/rhel-10.2-x86_64-dvd.iso
 #
 # The script exits non-zero and does nothing if a base for today already exists.
@@ -39,8 +39,8 @@ DATE=$(date -u +%Y%m%d)
 
 # Default ISO location — override with --iso flag
 ISO_PATH="${HOME}/rhel-10.2-x86_64-dvd.iso"
-# Default boot mode — override with --boot-mode grub
-BOOT_MODE="uki"
+# Default boot mode: grub. RHEL 10 images are always grub; UKI is RHEL 9 only.
+BOOT_MODE="grub"
 
 # Parse args
 while [[ $# -gt 0 ]]; do

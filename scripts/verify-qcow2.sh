@@ -25,7 +25,7 @@ QCOW2=""
 REQUIRE_SSHD_MASKED="false"
 MIN_BINARY_DATE="2026-07-24"
 EXPECTED_PAYLOAD_TAG=""
-BOOT_MODE="uki"   # override with --boot-mode grub for grub-chain images
+BOOT_MODE="grub"  # RHEL 10 is always grub. Only RHEL 9 images use UKI: pass --boot-mode uki for those.
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$QCOW2" || ! -f "$QCOW2" ]]; then
-    echo "Usage: $0 <path-to.qcow2> [--min-binary-date YYYY-MM-DD] [--payload-tag TAG]"
+    echo "Usage: $0 <path-to.qcow2> [--min-binary-date YYYY-MM-DD] [--payload-tag TAG] [--boot-mode grub|uki]  (default grub = RHEL 10; uki = RHEL 9 only)"
     exit 1
 fi
 
