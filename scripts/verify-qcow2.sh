@@ -456,6 +456,9 @@ echo "nosha1_pmod=$(test -f /etc/crypto-policies/policies/modules/NO-SHA1.pmod &
 echo "sha1_left=$(awk -F= "(\$1~/(hash|sign)/ && \$2~/SHA1/ && \$2!~/^[ ]*-[ ]*([^#]+)?SHA1/){print}" /etc/crypto-policies/state/CURRENT.pol 2>/dev/null | wc -l)"
 echo "varlog_open=$(find /var/log -type f ! -name "lastlog*" ! -name "wtmp*" ! -name "btmp*" ! -name README -perm /0137 | tr "\n" " ")"
 echo "tmpfiles_rhsm=$(test -f /etc/tmpfiles.d/cis-varlog.conf && echo y || echo n)"
+echo "systemd_ver=$(rpm -q --qf "%{VERSION}-%{RELEASE}" systemd 2>/dev/null)"
+echo "jremote_ver=$(rpm -q --qf "%{VERSION}-%{RELEASE}" systemd-journal-remote 2>/dev/null)"
+echo "tmp_unit=$(test -f /etc/systemd/system/tmp.mount && echo y || echo n)"
 ' 2>/dev/null || true)
 cisfact() { echo "$CIS_FACTS" | sed -n "s/^$1=//p" | head -1; }
 CIS_MARKER=$(cisfact marker)
@@ -472,6 +475,10 @@ else
     cischk "#9 /usr/local/sbin mode <= 755" "$([[ $(cisfact usr_local_sbin) == "755" || $(cisfact usr_local_sbin) == "750" || $(cisfact usr_local_sbin) == "700" ]] && echo 1)" "got $(cisfact usr_local_sbin)"
     cischk "#3 no /var/log file more open than 0640 (wtmp/btmp/lastlog 0664)" "$([[ -z $(cisfact varlog_open | tr -d ' ') ]] && echo 1)" "open: $(cisfact varlog_open)"
     cischk "#3 tmpfiles.d rule keeps /var/log/rhsm logs 0640 at run time" "$([[ $(cisfact tmpfiles_rhsm) == y ]] && echo 1)" "missing /etc/tmpfiles.d/cis-varlog.conf"
+    # #8 (6.2.2.1.1): package present, and the SAME build as systemd (Lesson 94: a skewed pair froze boot)
+    cischk "#8 systemd-journal-remote installed, same version-release as systemd" \
+        "$([[ -n $(cisfact jremote_ver) && $(cisfact jremote_ver) == $(cisfact systemd_ver) ]] && echo 1)" \
+        "systemd='$(cisfact systemd_ver)' journal-remote='$(cisfact jremote_ver)'"
     if [[ "${CIS_LEVEL_N:-0}" -ge 2 ]]; then
         cischk "#4 pwquality minlen >= 15" "$([[ $(cisfact minlen) =~ ^minlen=(1[5-9]|[2-9][0-9])$ ]] && echo 1)" "got '$(cisfact minlen)'"
         cischk "#7 PASS_MAX_DAYS <= 90" "$([[ $(cisfact pass_max) =~ ^PASS_MAX_DAYS\ ([1-9]|[1-8][0-9]|90)$ ]] && echo 1)" "got '$(cisfact pass_max)'"
@@ -479,6 +486,7 @@ else
     fi
     if [[ "${CIS_LEVEL_N:-0}" -ge 3 ]]; then
         cischk "#1 /etc/fstab has a /tmp line" "$([[ $(cisfact fstab_tmp) -ge 1 ]] && echo 1)" "no /tmp line"
+        cischk "#1 real /etc/systemd/system/tmp.mount (keeps is-enabled = enabled)" "$([[ $(cisfact tmp_unit) == y ]] && echo 1)" "missing"
         cischk "#10 firewalld trusted zone has 2 loopback anti-spoof rich rules" "$([[ $(cisfact fw_rules) -ge 2 ]] && echo 1)" "found $(cisfact fw_rules)"
     fi
 fi

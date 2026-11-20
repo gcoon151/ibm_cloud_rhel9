@@ -93,7 +93,12 @@ chk "#15-sha1_in_certs" "sha1_in_certs not 0" grep -Pq '^\h*sha1_in_certs\h*=\h*
 
 # #8/#14 (journal-remote / journal-upload)
 chk "#8-journal-remote-pkg" "systemd-journal-remote not installed" rpm -q systemd-journal-remote
-res INFO "#14-journal-upload" "enabled=$(systemctl is-enabled systemd-journal-upload.service 2>&1) active=$(systemctl is-active systemd-journal-upload.service 2>&1)"
+# #14 CIS 6.2.2.1.3: Tenable runs `systemctl is-enabled` and `systemctl is-active` on systemd-journal-upload.service
+sleep 5   # let the unit settle after boot; a unit that crash-loops is not "active"
+chk "#14-upload-enabled" "is-enabled=$(systemctl is-enabled systemd-journal-upload.service 2>&1)" bash -c '[ "$(systemctl is-enabled systemd-journal-upload.service)" = enabled ]'
+chk "#14-upload-active" "is-active=$(systemctl is-active systemd-journal-upload.service 2>&1)" bash -c '[ "$(systemctl is-active systemd-journal-upload.service)" = active ]'
+# #5 CIS 6.2.3.6: an rsyslog omfwd action (new format) or an @@host line (old format) in rsyslog.conf / rsyslog.d
+res INFO "#5-rsyslog-remote" "$(grep -rhE 'type="omfwd"|^[^#]*@@' /etc/rsyslog.conf /etc/rsyslog.d 2>/dev/null | head -2 | tr '\n' ' ')"
 
 # #12/#16 forwarding (expected to be handled by the fwd batch, or listed as waiver)
 res INFO "#12-all.forwarding" "$(sysctl -n net.ipv4.conf.all.forwarding)"
