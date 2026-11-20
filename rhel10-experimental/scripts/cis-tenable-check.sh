@@ -98,7 +98,8 @@ sleep 5   # let the unit settle after boot; a unit that crash-loops is not "acti
 chk "#14-upload-enabled" "is-enabled=$(systemctl is-enabled systemd-journal-upload.service 2>&1)" bash -c '[ "$(systemctl is-enabled systemd-journal-upload.service)" = enabled ]'
 chk "#14-upload-active" "is-active=$(systemctl is-active systemd-journal-upload.service 2>&1)" bash -c '[ "$(systemctl is-active systemd-journal-upload.service)" = active ]'
 # #5 CIS 6.2.3.6: an rsyslog omfwd action (new format) or an @@host line (old format) in rsyslog.conf / rsyslog.d
-res INFO "#5-rsyslog-remote" "$(grep -rhE 'type="omfwd"|^[^#]*@@' /etc/rsyslog.conf /etc/rsyslog.d 2>/dev/null | head -2 | tr '\n' ' ')"
+chk "#5-rsyslog-omfwd" "no omfwd action in /etc/rsyslog.conf or /etc/rsyslog.d (new format) and no @@host line (old format)" \
+    bash -c 'grep -rhEq "action\(type=\"omfwd\"|^[^#]*@@" /etc/rsyslog.conf /etc/rsyslog.d'
 
 # #12/#16 forwarding (expected to be handled by the fwd batch, or listed as waiver)
 res INFO "#12-all.forwarding" "$(sysctl -n net.ipv4.conf.all.forwarding)"
@@ -132,5 +133,22 @@ chk "R-crypto-policy-applies" "$(update-crypto-policies --show)" bash -c 'update
 # rpm still verifies Red Hat signatures with SHA1 removed
 chk "R-rpm-sig-rhel-pkg" "rpm -K failed on an installed header" bash -c 'rpm -q --qf "%{NAME} %{SIGPGP:pgpsig}\n" bash | grep -qi "key ID"'
 chk "R-openssl-tls-nosha1" "openssl cannot do a SHA256 sign/verify" bash -c 'echo x | openssl dgst -sha256 >/dev/null'
+
+# the loopback sinks added for #5/#14 must really receive data (otherwise the checks above would be cosmetic)
+if systemctl is-enabled rsyslog.service >/dev/null 2>&1; then
+    chk "R-rsyslog-active" "is-active=$(systemctl is-active rsyslog.service 2>&1)" bash -c '[ "$(systemctl is-active rsyslog.service)" = active ]'
+    logger -p authpriv.info "cis-tenable-check-probe-$$"; sleep 3
+    chk "R-rsyslog-loopback-receives" "authpriv probe not found in /var/log/remote/auth.log" grep -q "cis-tenable-check-probe-$$" /var/log/remote/auth.log
+    chk "R-rsyslog-authlog-mode" "$(stat -c '%a %U:%G' /var/log/remote/auth.log 2>&1)" bash -c '[ $(( 0$(stat -c %a /var/log/remote/auth.log) & 0137 )) -eq 0 ]'
+else res INFO "R-rsyslog" "rsyslog not enabled in this build"; fi
+if systemctl is-enabled podvm-journal-sink.service >/dev/null 2>&1; then
+    chk "R-journal-sink-active" "is-active=$(systemctl is-active podvm-journal-sink.service 2>&1)" bash -c '[ "$(systemctl is-active podvm-journal-sink.service)" = active ]'
+    chk "R-journal-sink-listens-loopback-only" "$(ss -ltn | grep 19532)" bash -c 'ss -ltn | grep -q "127.0.0.1:19532" && ! ss -ltn | grep 19532 | grep -qE "0.0.0.0:19532|\[::\]:19532|\*:19532"'
+    chk "R-journal-sink-has-data" "no *.journal under /var/log/journal/remote" bash -c 'ls /var/log/journal/remote/*.journal >/dev/null 2>&1'
+    chk "R-journal-remote-socket-masked" "systemd-journal-remote.socket is-enabled=$(systemctl is-enabled systemd-journal-remote.socket 2>&1)" bash -c '[ "$(systemctl is-enabled systemd-journal-remote.socket)" = masked ]'
+fi
+# 4.1.7 public zone
+PZ=$(firewall-cmd --zone=public --list-services 2>/dev/null)
+if echo "$PZ" | grep -Eqw 'ssh|cockpit|dhcpv6-client'; then res INFO "4.1.7-public-zone" "still open: $PZ"; else res PASS "4.1.7-public-zone" "services: ${PZ:-none}"; fi
 
 echo "TENABLE_EQ pass=$P fail=$F"

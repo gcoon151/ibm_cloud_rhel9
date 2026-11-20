@@ -65,6 +65,7 @@ ssh_pwauth: false
 ssh_authorized_keys:
   - $(cat "$KEY.pub")
 runcmd:
+  - [ sh, -c, "firewall-cmd --add-service=ssh >/dev/null 2>&1 || true" ]
   - [ systemctl, unmask, sshd.service ]
   - [ systemctl, enable, --now, sshd.service ]
 EOF

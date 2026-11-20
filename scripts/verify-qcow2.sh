@@ -456,6 +456,11 @@ echo "nosha1_pmod=$(test -f /etc/crypto-policies/policies/modules/NO-SHA1.pmod &
 echo "sha1_left=$(awk -F= "(\$1~/(hash|sign)/ && \$2~/SHA1/ && \$2!~/^[ ]*-[ ]*([^#]+)?SHA1/){print}" /etc/crypto-policies/state/CURRENT.pol 2>/dev/null | wc -l)"
 echo "varlog_open=$(find /var/log -type f ! -name "lastlog*" ! -name "wtmp*" ! -name "btmp*" ! -name README -perm /0137 | tr "\n" " ")"
 echo "tmpfiles_rhsm=$(test -f /etc/tmpfiles.d/cis-varlog.conf && echo y || echo n)"
+echo "rsys_omfwd=$(grep -rhEc "action\(type=\"omfwd\"" /etc/rsyslog.conf /etc/rsyslog.d 2>/dev/null | paste -sd+ | bc 2>/dev/null)"
+echo "jup_enabled=$(test -L /etc/systemd/system/multi-user.target.wants/systemd-journal-upload.service && echo y || echo n)"
+echo "jup_masked=$(readlink /etc/systemd/system/systemd-journal-upload.service 2>/dev/null)"
+echo "jsink_enabled=$(test -L /etc/systemd/system/multi-user.target.wants/podvm-journal-sink.service && echo y || echo n)"
+echo "pub_services=$(grep -o "service name=\"[a-z0-9-]*\"" /etc/firewalld/zones/public.xml 2>/dev/null | tr "\n" " ")"
 echo "systemd_ver=$(rpm -q --qf "%{VERSION}-%{RELEASE}" systemd 2>/dev/null)"
 echo "jremote_ver=$(rpm -q --qf "%{VERSION}-%{RELEASE}" systemd-journal-remote 2>/dev/null)"
 echo "tmp_unit=$(test -f /etc/systemd/system/tmp.mount && echo y || echo n)"
@@ -479,6 +484,12 @@ else
     cischk "#8 systemd-journal-remote installed, same version-release as systemd" \
         "$([[ -n $(cisfact jremote_ver) && $(cisfact jremote_ver) == $(cisfact systemd_ver) ]] && echo 1)" \
         "systemd='$(cisfact systemd_ver)' journal-remote='$(cisfact jremote_ver)'"
+    if [[ "${CIS_LEVEL_N:-0}" -ge 1 && -n $(cisfact jremote_ver) ]]; then
+        cischk "#14 systemd-journal-upload enabled (not masked) + loopback sink enabled" \
+            "$([[ $(cisfact jup_enabled) == y && -z $(cisfact jup_masked) && $(cisfact jsink_enabled) == y ]] && echo 1)" \
+            "upload_wants=$(cisfact jup_enabled) masked='$(cisfact jup_masked)' sink=$(cisfact jsink_enabled)"
+        cischk "#5 rsyslog has an omfwd action" "$([[ "$(cisfact rsys_omfwd)" =~ ^[0-9]+$ && "$(cisfact rsys_omfwd)" -ge 1 ]] && echo 1)" "omfwd count '$(cisfact rsys_omfwd)'"
+    fi
     if [[ "${CIS_LEVEL_N:-0}" -ge 2 ]]; then
         cischk "#4 pwquality minlen >= 15" "$([[ $(cisfact minlen) =~ ^minlen=(1[5-9]|[2-9][0-9])$ ]] && echo 1)" "got '$(cisfact minlen)'"
         cischk "#7 PASS_MAX_DAYS <= 90" "$([[ $(cisfact pass_max) =~ ^PASS_MAX_DAYS\ ([1-9]|[1-8][0-9]|90)$ ]] && echo 1)" "got '$(cisfact pass_max)'"
@@ -488,6 +499,7 @@ else
         cischk "#1 /etc/fstab has a /tmp line" "$([[ $(cisfact fstab_tmp) -ge 1 ]] && echo 1)" "no /tmp line"
         cischk "#1 real /etc/systemd/system/tmp.mount (keeps is-enabled = enabled)" "$([[ $(cisfact tmp_unit) == y ]] && echo 1)" "missing"
         cischk "#10 firewalld trusted zone has 2 loopback anti-spoof rich rules" "$([[ $(cisfact fw_rules) -ge 2 ]] && echo 1)" "found $(cisfact fw_rules)"
+        cischk "4.1.7 public zone has no ssh/cockpit/dhcpv6-client" "$([[ ! $(cisfact pub_services) =~ (ssh|cockpit|dhcpv6-client) ]] && echo 1)" "services: $(cisfact pub_services)"
     fi
 fi
 

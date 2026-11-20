@@ -23,6 +23,9 @@ case "$LEVEL" in 1|2|3|4) ;; *) echo "ERROR: bad CIS level '$LEVEL'" >&2; exit 1
 #   tmp  = #1 /tmp line in /etc/fstab
 #   fw   = #10 firewalld loopback anti-spoof rich rules
 #   sha1 = #15 NO-SHA1 crypto sub-policy
+#   jlog = #8/#14 systemd-journal-upload enabled+active, fed by a loopback journal sink (needs systemd-journal-remote in the base)
+#   rsys = #5 rsyslog omfwd authpriv -> 127.0.0.1:514 with a loopback imtcp listener that retains it
+#   zone = CIS 4.1.7: remove ssh/cockpit/dhcpv6-client from the public zone (hardened builds have sshd masked)
 # Only cis-dev-loop.sh / cis-scan.sh set anything other than "all".
 BATCHES=$(cat /tmp/cis-batches 2>/dev/null || echo all); rm -f /tmp/cis-batches
 want() { [ "$BATCHES" = all ] && return 0; case ",$BATCHES," in *",$1,"*) return 0;; *) return 1;; esac; }
@@ -173,19 +176,77 @@ if rpm -q systemd-journal-remote >/dev/null 2>&1; then
     DONE+=(journal-remote-from-base)
     # With the package present, CIS also checks service_systemd-journal-upload_enabled and
     # socket_systemd-journal-remote_disabled (code from 1ea9417/54fc52b, reverted with Lesson 94).
-    # journal-upload needs URL= in /etc/systemd/journal-upload.conf to ship logs anywhere.
-    systemctl unmask systemd-journal-upload.service 2>/dev/null || true
-    systemctl enable systemd-journal-upload.service 2>/dev/null || true
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /usr/lib/systemd/system/systemd-journal-upload.service \
-        /etc/systemd/system/multi-user.target.wants/systemd-journal-upload.service
-    mkdir -p /etc/systemd
-    cat > /etc/systemd/journal-upload.conf << 'EOF'
-[Upload]
-URL=https://127.0.0.1:19532
-EOF
     systemctl mask systemd-journal-remote.socket 2>/dev/null || true
-    DONE+=(journal-upload-enabled journal-remote-socket-masked)
+    DONE+=(journal-remote-socket-masked)
+    if want jlog; then
+        # batch jlog (#14 CIS 6.2.2.1.3 + #5 CIS 6.2.3.6, 2026-11-20): journal-upload must be enabled AND active, and rsyslog
+        # must carry an omfwd action. Both point at a LOCAL sink on 127.0.0.1 that keeps what it receives, so the units do real
+        # work (logs are retained a second time under /var/log/journal/remote). It does NOT ship logs off the VM:
+        # no IBM log relay is reachable from a pod VM subnet (docs/TENABLE_CIS_AUDIT_FINDINGS_2026-11-19.md, Addenda 1-2).
+        # The sink is our own unit, NOT systemd-journal-remote.service/.socket (those stay masked for the CIS "not in use" check).
+        # It runs as root: CIS 6.2.4.1 requires *.journal files to be owned by root, a dedicated user would create a new finding.
+        mkdir -p /var/log/journal/remote
+        chmod 750 /var/log/journal/remote
+        cat > /etc/systemd/system/podvm-journal-sink.service << 'EOF'
+[Unit]
+Description=PodVM loopback journal sink (retains uploaded journal, 127.0.0.1 only)
+After=network-pre.target local-fs.target
+Before=systemd-journal-upload.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-http=127.0.0.1:19532 --output=/var/log/journal/remote/
+UMask=0137
+Restart=on-failure
+RestartSec=5
+ProtectSystem=strict
+ReadWritePaths=/var/log/journal/remote
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        chmod 644 /etc/systemd/system/podvm-journal-sink.service
+        systemctl enable podvm-journal-sink.service >/dev/null 2>&1
+        mkdir -p /etc/systemd
+        printf '[Upload]\nURL=http://127.0.0.1:19532\n' > /etc/systemd/journal-upload.conf
+        mkdir -p /etc/systemd/system/systemd-journal-upload.service.d
+        printf '[Unit]\nAfter=podvm-journal-sink.service\nWants=podvm-journal-sink.service\n' \
+            > /etc/systemd/system/systemd-journal-upload.service.d/10-sink.conf
+        systemctl unmask systemd-journal-upload.service 2>/dev/null || true
+        systemctl enable systemd-journal-upload.service >/dev/null 2>&1
+        mkdir -p /etc/systemd/system/multi-user.target.wants
+        [ -L /etc/systemd/system/multi-user.target.wants/systemd-journal-upload.service ] || \
+            ln -sf /usr/lib/systemd/system/systemd-journal-upload.service \
+                /etc/systemd/system/multi-user.target.wants/systemd-journal-upload.service
+        [ -L /etc/systemd/system/multi-user.target.wants/podvm-journal-sink.service ] || { echo "ERROR: podvm-journal-sink not enabled" >&2; exit 1; }
+        DONE+=(journal-upload-enabled journal-sink-loopback)
+    fi
+fi
+
+# batch rsys (#5 CIS 6.2.3.6, 2026-11-20): the audit wants an rsyslog omfwd action. rsyslog is ENABLED here (it was disabled above:
+# journald-only), forwards authpriv over TCP to 127.0.0.1:514, and an imtcp listener on the same address keeps what arrives in
+# /var/log/remote/auth.log (0640 root). So the action does real work, but logs do NOT leave the VM (see batch jlog comment).
+if want rsys; then
+    mkdir -p /var/log/remote /etc/rsyslog.d
+    chmod 750 /var/log/remote
+    printf '%s\n' \
+        '# CIS 6.2.3.6: forward authentication messages (omfwd) to the loopback listener below, which retains them.' \
+        'module(load="imtcp")' \
+        'ruleset(name="loopback_in") {' \
+        '    action(type="omfile" file="/var/log/remote/auth.log" fileCreateMode="0640" dirCreateMode="0750")' \
+        '}' \
+        'input(type="imtcp" address="127.0.0.1" port="514" ruleset="loopback_in")' \
+        'authpriv.* action(type="omfwd" target="127.0.0.1" port="514" protocol="tcp"' \
+        '           action.resumeRetryCount="100" queue.type="LinkedList" queue.size="1000")' \
+        > /etc/rsyslog.d/90-cis-remote.conf
+    chmod 644 /etc/rsyslog.d/90-cis-remote.conf
+    grep -q 'type="omfwd"' /etc/rsyslog.d/90-cis-remote.conf
+    systemctl enable rsyslog.service >/dev/null 2>&1
+    [ -L /etc/systemd/system/multi-user.target.wants/rsyslog.service ] || { echo "ERROR: rsyslog not enabled" >&2; exit 1; }
+    DONE+=(rsyslog-omfwd-loopback)
 fi
 
 
@@ -358,6 +419,18 @@ if [ "$LEVEL" -ge 3 ]; then
         firewall-offline-cmd --zone=trusted --list-rich-rules | grep -q 'source address="127.0.0.1"'
         firewall-offline-cmd --zone=trusted --list-rich-rules | grep -q 'source address="::1"'
         DONE+=(fw-loopback-spoof)
+    fi
+    # batch zone (CIS 4.1.7 WARNING row, 2026-11-20): the public zone listed ssh/cockpit/dhcpv6-client although sshd is masked
+    # and cockpit is not installed. Close what is not used. 15150/tcp (agent-protocol-forwarder) stays; DHCP client is
+    # outbound-initiated IPv4 (dhcpv6-client is IPv6 only).
+    # Safe only because HARDENED builds require SSHD_SERVICE=false (build-rhel10-overlay.sh refuses otherwise). cis-scan.sh re-opens ssh
+    # at RUNTIME in its throw-away overlay (cloud-init runcmd), so the scan harness still works.
+    if want zone; then
+        for s in ssh cockpit dhcpv6-client; do
+            firewall-offline-cmd --zone=public --remove-service=$s >/dev/null 2>&1 || true
+        done
+        ! firewall-offline-cmd --zone=public --list-services | grep -Eqw 'ssh|cockpit|dhcpv6-client'
+        DONE+=(fw-public-zone-closed)
     fi
     firewall-offline-cmd --zone=public --list-ports | grep -qw '15150/tcp' || { echo "ERROR: 15150/tcp not open in firewalld" >&2; exit 1; }
     DONE+=(firewalld)
