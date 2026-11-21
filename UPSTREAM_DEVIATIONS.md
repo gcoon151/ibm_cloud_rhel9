@@ -637,6 +637,16 @@ Source: Tenable "CIS Red Hat Enterprise Linux 10 v1.0.1 L1 Server" scan of `rhel
 
 Build chain change: hardened builds for this fix start from `rhel10-grub-base-jr-20261026.qcow2` (has `systemd-journal-remote`), not `rhel10-grub-base-20261026.qcow2`. Checked: `dnf` moves systemd and journal-remote together (257-23.el10_2.1 to 257-33.el10), no skew.
 
+**Tooling changes (not in the image, but they decide whether an image is accepted):**
+- `scripts/verify-qcow2.sh` gate `[5e]` (new): asserts each Tenable fix on the finished image, tier-aware, including that `systemd` and `systemd-journal-remote` have the same version-release (Lesson 94). Two probes were wrong at first (`bc` is not in the guest; firewalld writes `destination address=".." invert="True"`), fixed in `f6cb0de`.
+- Boot mode default is now `grub` in `verify-qcow2.sh`, `helpers/rebuild-base-rhel10.sh` and `rhel10-experimental/scripts/patches/verity.sh` (was `uki`), `e1c8801`. RHEL 10 is always grub; UKI is RHEL 9 only (`--boot-mode uki`).
+- `rhel10-experimental/scripts/cis-tenable-check.sh`, `cis-dev-loop.sh` (`CIS_BATCHES`, `CIS_TENABLE`, `CIS_SKIP_OSCAP`), `cis-batch-run.sh`, `cis-scan.sh` (runs `firewall-cmd --add-service=ssh` at runtime in its throw-away overlay only; it is not in the image).
+- `scripts/get-serial-console.py` (EDR repo, not this repo): retries the console attach until the stream deadline instead of 6 x 5 s. Needed for `test-podvm.sh` test 9 to see early-boot lines on a new VSI.
+
+**Images produced with these changes (2026-11-20):**
+- Standard (SSH enabled, `HARDENED` unset): `rhel10-2026112016.qcow2`, built from the jr base, 29/29 verify gates, QEMU boot passed, used for the local dev-loops only. Not uploaded to IBM Cloud.
+- Hardened (tier 4, SSH disabled and masked): `rhel10-hardened-2026112017.qcow2`, VSI image `podvm-candidate-rhel10-hardened-2026112017`, `r014-0627faf2-4fc4-4281-a625-7b9033fefd95`. Kernel `6.12.0-264.17.1.el10_3`. Verify 43/43, OpenSCAP CIS L1 294 pass / 2 fail (forwarding waiver), `test-podvm.sh hardened` 11/11 on IBM Cloud. Built on `f6cb0de`-era scripts; `[5e]` probe fixes and grub defaults landed after the build and were applied to the verify run only (no image content differs).
+
 **Not changed, still open at the time of writing:** #12/#16 (IPv4 forwarding, set at runtime by `setup-nat-for-imds.sh` line 25), #2/#11 (kata runtime files under `/run/kata-containers`). See the findings doc.
 
 
