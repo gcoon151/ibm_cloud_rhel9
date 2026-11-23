@@ -530,6 +530,27 @@ for U in rhsmcertd.service fwupd.service fwupd-refresh.service fwupd-refresh.tim
 done
 
 # ---------------------------------------------------------------------------
+# 5f (cont). The UMask drop-in alone does not cover cloud-init/tmpfiles/script-written files (measured on rhel10-2026112318).
+PEER_CHMOD=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- cat /etc/systemd/system/process-user-data.service.d/30-chmod-peerpod.conf 2>/dev/null || true)
+if echo "$PEER_CHMOD" | grep -q 'ExecStartPost=.*find /run/peerpod.*chmod 0600'; then
+    ok "#166 process-user-data ExecStartPost chmod 0600 /run/peerpod/* present (apf.json, auth.json, initdata, policy.rego)"
+else
+    fail "#166 process-user-data 30-chmod-peerpod.conf missing: cloud-init-written apf.json/auth.json/initdata stay 0644"
+fi
+ENT_CHMOD=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- cat /etc/systemd/system/cloud-final.service.d/30-entitlement-key-0600.conf 2>/dev/null || true)
+if echo "$ENT_CHMOD" | grep -q 'ExecStartPost=.*find /etc/pki/entitlement.*chmod 0600'; then
+    ok "#166 cloud-final ExecStartPost chmod 0600 /etc/pki/entitlement/*-key.pem present"
+else
+    fail "#166 cloud-final 30-entitlement-key-0600.conf missing: runtime entitlement key stays 0644"
+fi
+UPT_CHMOD=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- cat /usr/local/bin/provision-uptycs.sh 2>/dev/null | grep -c 'chmod 0600 "\$TEMP_CONFIG"' || true)
+if [[ "${UPT_CHMOD:-0}" -ge 1 ]]; then
+    ok "#166 provision-uptycs.sh writes /run/peerpod/uptycs.conf 0600"
+else
+    fail "#166 provision-uptycs.sh leaves /run/peerpod/uptycs.conf at 0644 (holds UPTYCS_SECRET)"
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Version manifest + payload assertions
 # ---------------------------------------------------------------------------
 echo ""

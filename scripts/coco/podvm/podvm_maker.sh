@@ -414,6 +414,33 @@ if ! grep -qx 'UMask=0077' /etc/systemd/system/process-user-data.service.d/20-um
 fi
 echo "✓ process-user-data UMask=0077 drop-in installed (pen-test #166)"
 
+# IBM MOD (pen-test #166, measured 2026-11-23 on rhel10-2026112318): UMask=0077 only covers files that
+# process-user-data itself creates (aa.toml, cdh.toml, initdata.digest). apf.json, auth.json and initdata are
+# written by cloud-init write_files at 0644 BEFORE process-user-data runs; policy.rego is a tmpfiles.d copy whose
+# mode is kept when process-user-data overwrites it. process-user-data is After=cloud-init.service, so chmod after it.
+cat <<'EOF' > /etc/systemd/system/process-user-data.service.d/30-chmod-peerpod.conf
+[Service]
+ExecStartPost=/usr/bin/find /run/peerpod -maxdepth 1 -type f -exec chmod 0600 {} +
+EOF
+if ! grep -q 'chmod 0600' /etc/systemd/system/process-user-data.service.d/30-chmod-peerpod.conf; then
+    echo "ERROR: process-user-data 30-chmod-peerpod.conf was not written" >&2
+    exit 1
+fi
+echo "✓ process-user-data ExecStartPost chmod 0600 /run/peerpod/* installed (pen-test #166)"
+
+# IBM MOD (pen-test #166): the IBM Cloud vendor-data script runs subscription-manager register in cloud-final and
+# leaves /etc/pki/entitlement/<serial>-key.pem at 0644. We cannot stop IBM's registration; tighten the key afterwards.
+mkdir -p /etc/systemd/system/cloud-final.service.d
+cat <<'EOF' > /etc/systemd/system/cloud-final.service.d/30-entitlement-key-0600.conf
+[Service]
+ExecStartPost=-/usr/bin/find /etc/pki/entitlement -maxdepth 1 -type f -name '*-key.pem' -exec chmod 0600 {} +
+EOF
+if ! grep -q 'chmod 0600' /etc/systemd/system/cloud-final.service.d/30-entitlement-key-0600.conf; then
+    echo "ERROR: cloud-final 30-entitlement-key-0600.conf was not written" >&2
+    exit 1
+fi
+echo "✓ cloud-final ExecStartPost chmod 0600 entitlement key installed (pen-test #166)"
+
 # IBM MOD (pen-test #169): rhsmcertd (cert refresh daemon, runs as root) is not needed at runtime;
 # fwupd/bluetooth are useless on a VM. Mask in ALL tiers (cis-harden.sh repeats fwupd/bluetooth for hardened tiers; idempotent).
 for u in rhsmcertd.service fwupd.service fwupd-refresh.service fwupd-refresh.timer bluetooth.service; do

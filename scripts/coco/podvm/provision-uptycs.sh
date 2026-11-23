@@ -60,7 +60,9 @@ fi
 
 # Write configuration to temporary location
 TEMP_CONFIG="/run/peerpod/uptycs.conf"
-echo "$UPTYCS_CONF" > "$TEMP_CONFIG"
+# IBM MOD (pen-test #166): the file holds UPTYCS_SECRET; create it 0600 (root umask 022 would give 0644).
+( umask 077; echo "$UPTYCS_CONF" > "$TEMP_CONFIG" )
+chmod 0600 "$TEMP_CONFIG"
 
 # Source the configuration
 source "$TEMP_CONFIG"

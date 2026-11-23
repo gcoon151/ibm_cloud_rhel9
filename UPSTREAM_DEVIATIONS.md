@@ -650,6 +650,21 @@ Build chain change: hardened builds for this fix start from `rhel10-grub-base-jr
 **Not changed, still open at the time of writing:** #12/#16 (IPv4 forwarding, set at runtime by `setup-nat-for-imds.sh` line 25), #2/#11 (kata runtime files under `/run/kata-containers`). See the findings doc.
 
 
+### Pen test 22948 image fixes (2026-11-23, commit c7f6477) — IRM #166, #169
+
+| Change | Where | Upstream does | We do | Why | Revert condition |
+|---|---|---|---|---|---|
+| `UMask=0077` drop-in `process-user-data.service.d/20-umask.conf` | `podvm_maker.sh` (all tiers) | `cloud-api-adaptor` `pkg/userdata/provision.go` calls `os.WriteFile(path, bytes, 0644)` (re-read at origin/main `0e687e789`, 2026-11-23: still 0644), so `/run/peerpod/apf.json` and `auth.json` are world-readable | Unit umask 0077 turns 0644 into 0600 | Pen test #166 items 3/4 | Upstream writes 0600 (then delete the drop-in and gate `[5f]` umask check) |
+| mask `rhsmcertd`, `fwupd`, `fwupd-refresh.{service,timer}`, `bluetooth` in ALL tiers | `podvm_maker.sh` (`cis-harden.sh` still masks fwupd/bluetooth for hardened tiers; idempotent) | Leaves them enabled; `rhsmcertd` runs as root | Mask with `/dev/null` symlinks, build fails if any is not masked | Pen test #169 (root processes not needed on a VM) | A feature needs one of these units at runtime |
+| gate `[5f]` in `verify-qcow2.sh` | `verify-qcow2.sh` | n/a | Fails if the umask drop-in is missing, if `/etc/pki/entitlement/*.pem` or `/etc/pki/consumer/key.pem` is baked in, or if any of the 5 units is not masked. Negative control on `rhel10-hardened-2026112017.qcow2` (no fix): drop-in missing, `rhsmcertd.service` unmasked, so the gate fails on it | Prove the fixes ship | n/a |
+| `process-user-data.service.d/30-chmod-peerpod.conf`: `ExecStartPost=find /run/peerpod -maxdepth 1 -type f -exec chmod 0600` | `podvm_maker.sh` (all tiers) | cloud-init `write_files` writes `/run/peerpod/apf.json`, `auth.json`, `initdata` at 0644 in the init-network stage; `policy.rego` is a tmpfiles.d `C` copy that keeps its mode when process-user-data overwrites it | chmod 0600 after process-user-data (it is `After=cloud-init.service`) | MEASURED on `rhel10-2026112318` (c7f6477 build): the `UMask=0077` drop-in fixed only aa.toml, cdh.toml and initdata.digest; apf.json, auth.json, initdata, policy.rego stayed 0644 (`docs/CIS_MEASURED_FACTS_2026-11-23.md`). Pen test #166 | Upstream CAA/cloud-init write these 0600 |
+| `cloud-final.service.d/30-entitlement-key-0600.conf`: `ExecStartPost=-find /etc/pki/entitlement ... -name '*-key.pem' -exec chmod 0600` | `podvm_maker.sh` (all tiers) | IBM Cloud vendor-data runs `subscription-manager register` in cloud-final; the key lands 0644 | chmod 0600 after cloud-final | MEASURED: `/etc/pki/entitlement/<serial>-key.pem` was 0644 at runtime on `rhel10-2026112318`; nothing is baked into the image (gate `[5f]` passes), the VSI registers at boot. Pen test #166 item 1 | IBM Cloud vendor-data stops registering, or subscription-manager writes 0600 |
+| `provision-uptycs.sh`: `( umask 077; echo ... > /run/peerpod/uptycs.conf )` and `chmod 0600` | `ibm_cloud_rhel9/scripts/coco/podvm/provision-uptycs.sh` | n/a (IBM-only script) | write the file 0600 | The file holds `UPTYCS_SECRET`; measured 0644 on `rhel10-2026112318` | never (IBM-specific) |
+| gate `[5f]` extended | `verify-qcow2.sh` | n/a | three more checks: the two chmod drop-ins exist and `provision-uptycs.sh` carries the 0600 chmod | Prove the second fix ships | n/a |
+
+
+
+
 ---
 
 ## P: Uptycs EDR install in `coco-components.sh` (RHEL 10 patch)
