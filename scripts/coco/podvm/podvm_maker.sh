@@ -401,6 +401,30 @@ ExecStartPre=-/bin/mount -t iso9660 -o ro /dev/disk/by-label/cidata /media/cidat
 EOF
 echo "✓ process-user-data override installed (no-vTPM: tpm2_pcrextend removed)"
 
+# IBM MOD (pen-test #166 items 3/4): cloud-api-adaptor pkg/userdata/provision.go does
+# os.WriteFile(path, bytes, 0644), so /run/peerpod/apf.json and auth.json are world-readable.
+# Upstream origin/main still does this (checked 2026-11-23). A umask on the unit turns 0644 into 0600.
+cat <<'EOF' > /etc/systemd/system/process-user-data.service.d/20-umask.conf
+[Service]
+UMask=0077
+EOF
+if ! grep -qx 'UMask=0077' /etc/systemd/system/process-user-data.service.d/20-umask.conf; then
+    echo "ERROR: process-user-data 20-umask.conf was not written" >&2
+    exit 1
+fi
+echo "✓ process-user-data UMask=0077 drop-in installed (pen-test #166)"
+
+# IBM MOD (pen-test #169): rhsmcertd (cert refresh daemon, runs as root) is not needed at runtime;
+# fwupd/bluetooth are useless on a VM. Mask in ALL tiers (cis-harden.sh repeats fwupd/bluetooth for hardened tiers; idempotent).
+for u in rhsmcertd.service fwupd.service fwupd-refresh.service fwupd-refresh.timer bluetooth.service; do
+    systemctl mask "$u" >/dev/null 2>&1 || ln -sf /dev/null "/etc/systemd/system/$u"
+    if [ "$(readlink -f "/etc/systemd/system/$u")" != "/dev/null" ]; then
+        echo "ERROR: $u is not masked" >&2
+        exit 1
+    fi
+done
+echo "✓ rhsmcertd, fwupd, fwupd-refresh, bluetooth masked in all tiers (pen-test #169)"
+
 # ---------------------------------------------------------------------------
 # Nessus /opt instance disk preparation service (idle unless INITDATA nessus=true)
 # ---------------------------------------------------------------------------

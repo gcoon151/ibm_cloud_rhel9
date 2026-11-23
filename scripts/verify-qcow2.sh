@@ -503,6 +503,32 @@ else
     fi
 fi
 
+# 5f. Pen test 22948 image fixes (#166, #169). Checked on every image, hardened or not.
+#     Uses cat/readlink/ls only (guestfish `sh` is not reliable in the appliance).
+echo ""
+echo "--- [5f] Pen test 22948: UMask drop-in, no baked-in entitlement keys, masked units ---"
+UMASK_CONF=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- cat /etc/systemd/system/process-user-data.service.d/20-umask.conf 2>/dev/null || true)
+if echo "$UMASK_CONF" | grep -qx 'UMask=0077'; then
+    ok "#166 process-user-data.service.d/20-umask.conf has UMask=0077 (apf.json/auth.json become 0600)"
+else
+    fail "#166 process-user-data UMask=0077 drop-in missing: /run/peerpod/apf.json and auth.json would be world-readable (0644)"
+fi
+ENT_PEM=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- ls /etc/pki/entitlement 2>/dev/null | grep -E '\.pem$' || true)
+CONS_KEY=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- is-file /etc/pki/consumer/key.pem 2>/dev/null || echo false)
+if [[ -z "$ENT_PEM" && "$CONS_KEY" != "true" ]]; then
+    ok "#166 no /etc/pki/entitlement/*.pem and no /etc/pki/consumer/key.pem baked into the image"
+else
+    fail "#166 subscription keys baked into the image: entitlement='${ENT_PEM//$'\n'/ }' consumer_key=${CONS_KEY}"
+fi
+for U in rhsmcertd.service fwupd.service fwupd-refresh.service fwupd-refresh.timer bluetooth.service; do
+    LNK=$(guestfish --ro -a "$QCOW2" -m "${ROOT_PART}" -- readlink "/etc/systemd/system/$U" 2>/dev/null || true)
+    if [[ "$LNK" == "/dev/null" ]]; then
+        ok "#169 $U masked (-> /dev/null)"
+    else
+        fail "#169 $U NOT masked (readlink='${LNK}')"
+    fi
+done
+
 # ---------------------------------------------------------------------------
 # 6. Version manifest + payload assertions
 # ---------------------------------------------------------------------------
